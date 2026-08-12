@@ -1,0 +1,41 @@
+version: "3.9"
+
+services:
+  db:
+    image: pgvector/pgvector:pg16
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: faceapp
+      POSTGRES_PASSWORD: faceapp_pw
+      POSTGRES_DB: face_auth
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U faceapp -d face_auth"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  api:
+    build: .
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql+psycopg2://faceapp:faceapp_pw@db:5432/face_auth
+      INSIGHTFACE_MODEL_PACK: buffalo_l
+      MATCH_THRESHOLD: "0.45"
+      LIVENESS_THRESHOLD: "0.85"
+    ports:
+      - "8000:8000"
+    volumes:
+      # Caches the auto-downloaded insightface model pack so it survives
+      # container rebuilds/restarts (only downloaded once, on first boot).
+      - insightface_models:/root/.insightface
+
+volumes:
+  pgdata:
+  insightface_models:

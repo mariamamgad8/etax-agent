@@ -1,0 +1,167 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>Face Login — Live Camera</title>
+<style>
+  :root { color-scheme: dark; }
+  body {
+    font-family: -apple-system, system-ui, sans-serif;
+    background: #0f1115; color: #e8e8ec;
+    max-width: 640px; margin: 40px auto; padding: 0 20px;
+  }
+  h1 { font-size: 1.3rem; font-weight: 600; }
+  video, canvas { width: 100%; border-radius: 12px; background: #000; }
+  canvas { display: none; }
+  .row { display: flex; gap: 10px; margin: 14px 0; flex-wrap: wrap; }
+  button {
+    flex: 1; min-width: 140px; padding: 12px 16px; border-radius: 8px; border: none;
+    font-size: 0.95rem; font-weight: 600; cursor: pointer;
+  }
+  #recognizeBtn { background: #4c8bf5; color: white; }
+  #registerBtn { background: #2a2d36; color: #e8e8ec; border: 1px solid #40434f; }
+  input[type=text] {
+    width: 100%; padding: 10px; border-radius: 8px; border: 1px solid #40434f;
+    background: #1a1c22; color: #e8e8ec; font-size: 0.95rem; box-sizing: border-box;
+  }
+  #status {
+    margin-top: 16px; padding: 14px; border-radius: 10px; font-size: 0.95rem;
+    background: #1a1c22; border: 1px solid #2a2d36; min-height: 24px; line-height: 1.5;
+  }
+  .ok { border-color: #2e7d4f !important; color: #6fd99a; }
+  .fail { border-color: #8a2e2e !important; color: #ff8a8a; }
+  .muted { color: #8b8d97; font-size: 0.85rem; }
+</style>
+</head>
+<body>
+  <h1>🎥 Face Login — Live Camera</h1>
+  <p class="muted">
+    Frames are captured directly from your webcam feed below and sent straight to the
+    API — nothing is ever uploaded from a file, so there's no "pick a photo" path to
+    misuse. Every capture is checked for liveness before any identity match runs.
+  </p>
+
+  <video id="video" autoplay playsinline muted></video>
+  <canvas id="canvas"></canvas>
+
+  <div class="row">
+    <input id="nameInput" type="text" placeholder="Name (only needed to register)" />
+  </div>
+  <div class="row">
+    <button id="recognizeBtn">Recognize</button>
+    <button id="registerBtn">Register as new person</button>
+  </div>
+
+  <div id="status">Waiting for camera…</div>
+
+  <script>
+    const video = document.getElementById('video');
+    const canvas = document.getElementById('canvas');
+    const statusEl = document.getElementById('status');
+    const nameInput = document.getElementById('nameInput');
+
+    // Same-origin API (this page is served by the same FastAPI app).
+    const API_BASE = '';
+
+    async function startCamera() {
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({
+          video: { width: 640, height: 480, facingMode: 'user' },
+          audio: false,
+        });
+        video.srcObject = stream;
+        setStatus('Camera ready.', null);
+      } catch (err) {
+        setStatus('Could not access the camera: ' + err.message, 'fail');
+      }
+    }
+
+    function setStatus(text, kind) {
+      statusEl.textContent = text;
+      statusEl.className = kind ? kind : '';
+    }
+
+    // Capture the current video frame as a JPEG Blob — this is a live
+    // frame from the active camera stream, not a file the user chose.
+    function captureFrame() {
+      canvas.width = video.videoWidth;
+      canvas.height = video.videoHeight;
+      canvas.getContext('2d').drawImage(video, 0, 0);
+      return new Promise((resolve) => canvas.toBlob(resolve, 'image/jpeg', 0.92));
+    }
+
+    async function recognize() {
+      setStatus('Capturing…', null);
+      const blob = await captureFrame();
+      const form = new FormData();
+      form.append('image', blob, 'live.jpg');
+
+      setStatus('Checking…', null);
+      try {
+        const res = await fetch(API_BASE + '/recognize', { method: 'POST', body: form });
+        const data = await res.json();
+        if (!res.ok) {
+          setStatus(describeError(res.status, data), 'fail');
+          return;
+        }
+        if (data.status === 'known') {
+          setStatus(
+            `✅ Welcome back, ${data.name}! (similarity ${data.similarity.toFixed(2)}, ` +
+            `liveness ${data.liveness_confidence.toFixed(2)})`,
+            'ok'
+          );
+        } else {
+          setStatus(
+            `No match found (liveness ${data.liveness_confidence.toFixed(2)}). ` +
+            `Enter a name above and press "Register as new person".`,
+            null
+          );
+        }
+      } catch (err) {
+        setStatus('Request failed: ' + err.message, 'fail');
+      }
+    }
+
+    async function register() {
+      const name = nameInput.value.trim();
+      if (!name) {
+        setStatus('Type a name first.', 'fail');
+        return;
+      }
+      setStatus('Capturing…', null);
+      const blob = await captureFrame();
+      const form = new FormData();
+      form.append('name', name);
+      form.append('image', blob, 'live.jpg');
+
+      setStatus('Registering…', null);
+      try {
+        const res = await fetch(API_BASE + '/register', { method: 'POST', body: form });
+        const data = await res.json();
+        if (!res.ok) {
+          setStatus(describeError(res.status, data), 'fail');
+          return;
+        }
+        setStatus(
+          `✅ Registered "${data.name}" (id ${data.person_id}, liveness ${data.liveness_confidence.toFixed(2)}).`,
+          'ok'
+        );
+      } catch (err) {
+        setStatus('Request failed: ' + err.message, 'fail');
+      }
+    }
+
+    function describeError(status, data) {
+      const detail = (data && data.detail) ? data.detail : 'Unknown error.';
+      if (status === 403) return '🚫 ' + detail; // liveness / spoof rejection
+      if (status === 422) return '⚠️ ' + detail; // no face detected
+      if (status === 409) return '⚠️ ' + detail; // duplicate enrollment
+      return `Error ${status}: ${detail}`;
+    }
+
+    document.getElementById('recognizeBtn').addEventListener('click', recognize);
+    document.getElementById('registerBtn').addEventListener('click', register);
+    startCamera();
+  </script>
+</body>
+</html>
