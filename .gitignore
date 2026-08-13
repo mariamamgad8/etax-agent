@@ -1,0 +1,2 @@
+﻿*.joblib
+!best_model/xgboost_fraud_model.joblib

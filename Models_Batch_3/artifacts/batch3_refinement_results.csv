@@ -1,0 +1,4 @@
+Model,Batch1_CV_PR_AUC,Batch3_CV_PR_AUC,Improved,Best_Params,Train_Time_s
+XGBoost,0.8037,0.804,True,"{'subsample': 0.7, 'reg_lambda': 1, 'reg_alpha': 0.01, 'n_estimators': 250, 'max_depth': 3, 'learning_rate': 0.05, 'colsample_bytree': 0.6}",82.7
+LightGBM,0.8006,0.8008,True,"{'subsample': 0.8, 'reg_lambda': 1, 'reg_alpha': 0.1, 'num_leaves': 31, 'n_estimators': 150, 'min_child_samples': 50, 'learning_rate': 0.03, 'colsample_bytree': 0.8}",72.9
+LogisticRegression,0.7255,0.7262,True,"{'C': 0.03162277660168379, 'penalty': 'l1', 'solver': 'liblinear'}",138.9
