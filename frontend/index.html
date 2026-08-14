@@ -1,0 +1,1103 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+    <title>Speech AI Assistant</title>
+
+    <style>
+
+        * {
+            box-sizing: border-box;
+        }
+
+        body {
+            margin: 0;
+            min-height: 100vh;
+
+            display: flex;
+            justify-content: center;
+            align-items: center;
+
+            font-family: Arial, sans-serif;
+
+            background: #f4f4f4;
+        }
+
+        .container {
+            width: 500px;
+            max-width: 90%;
+
+            background: white;
+
+            padding: 30px;
+
+            border-radius: 20px;
+
+            box-shadow:
+                0 10px 30px rgba(0, 0, 0, 0.1);
+
+            text-align: center;
+        }
+
+        h1 {
+            margin-bottom: 10px;
+        }
+
+        .status {
+            margin: 20px 0;
+
+            padding: 12px;
+
+            border-radius: 10px;
+
+            background: #f1f1f1;
+        }
+
+        .record-btn {
+            width: 160px;
+            height: 160px;
+
+            border-radius: 50%;
+
+            border: none;
+
+            background: #222;
+
+            color: white;
+
+            font-size: 20px;
+
+            cursor: pointer;
+
+            transition: 0.2s;
+        }
+
+        .record-btn.recording {
+            background: #d32f2f;
+
+            transform: scale(1.05);
+        }
+
+        .record-btn:disabled {
+            opacity: 0.5;
+
+            cursor: not-allowed;
+        }
+
+        .section {
+            margin-top: 25px;
+
+            padding: 15px;
+
+            border-radius: 12px;
+
+            background: #f8f8f8;
+
+            text-align: left;
+        }
+
+        .label {
+            font-weight: bold;
+
+            margin-bottom: 8px;
+        }
+
+        audio {
+            width: 100%;
+
+            margin-top: 10px;
+        }
+
+        .timings {
+            margin-top: 25px;
+
+            padding: 15px;
+
+            border-radius: 12px;
+
+            background: #f8f8f8;
+
+            text-align: left;
+
+            font-size: 14px;
+        }
+
+        .timings div {
+            margin: 6px 0;
+        }
+
+        .timing-label {
+            font-weight: bold;
+        }
+
+    </style>
+
+</head>
+
+
+<body>
+
+<div class="container">
+
+    <h1>🎙️ Speech AI Assistant</h1>
+
+    <p>Talk naturally with the assistant</p>
+
+
+    <!-- =====================================================
+         STATUS
+         ===================================================== -->
+
+    <div
+        id="status"
+        class="status"
+    >
+        Ready
+    </div>
+
+
+    <!-- =====================================================
+         RECORD BUTTON
+         ===================================================== -->
+
+    <button
+        id="recordButton"
+        class="record-btn"
+    >
+        🎤<br>
+        Record
+    </button>
+
+
+    <!-- =====================================================
+         USER TRANSCRIPT
+         ===================================================== -->
+
+    <div class="section">
+
+        <div class="label">
+            You said:
+        </div>
+
+        <div id="transcript">
+            —
+        </div>
+
+    </div>
+
+
+    <!-- =====================================================
+         ASSISTANT RESPONSE
+         ===================================================== -->
+
+    <div class="section">
+
+        <div class="label">
+            Assistant:
+        </div>
+
+        <div id="response">
+            —
+        </div>
+
+        <audio
+            id="audioPlayer"
+            controls
+        ></audio>
+
+    </div>
+
+
+    <!-- =====================================================
+         PERFORMANCE TIMINGS
+         ===================================================== -->
+
+    <div class="timings">
+
+        <div class="label">
+            Performance
+        </div>
+
+        <div>
+            <span class="timing-label">
+                STT:
+            </span>
+
+            <span id="sttTime">
+                —
+            </span>
+        </div>
+
+        <div>
+            <span class="timing-label">
+                Taya:
+            </span>
+
+            <span id="tayaTime">
+                —
+            </span>
+        </div>
+
+        <div>
+            <span class="timing-label">
+                TTS:
+            </span>
+
+            <span id="ttsTime">
+                —
+            </span>
+        </div>
+
+        <div>
+            <span class="timing-label">
+                Backend Total:
+            </span>
+
+            <span id="backendTime">
+                —
+            </span>
+        </div>
+
+        <div>
+            <span class="timing-label">
+                Frontend Request:
+            </span>
+
+            <span id="frontendTime">
+                —
+            </span>
+        </div>
+
+    </div>
+
+</div>
+
+
+<script>
+
+
+// =========================================================
+// DOM ELEMENTS
+// =========================================================
+
+const recordButton =
+    document.getElementById(
+        "recordButton"
+    );
+
+
+const statusElement =
+    document.getElementById(
+        "status"
+    );
+
+
+const transcriptElement =
+    document.getElementById(
+        "transcript"
+    );
+
+
+const responseElement =
+    document.getElementById(
+        "response"
+    );
+
+
+const audioPlayer =
+    document.getElementById(
+        "audioPlayer"
+    );
+
+
+const sttTimeElement =
+    document.getElementById(
+        "sttTime"
+    );
+
+
+const tayaTimeElement =
+    document.getElementById(
+        "tayaTime"
+    );
+
+
+const ttsTimeElement =
+    document.getElementById(
+        "ttsTime"
+    );
+
+
+const backendTimeElement =
+    document.getElementById(
+        "backendTime"
+    );
+
+
+const frontendTimeElement =
+    document.getElementById(
+        "frontendTime"
+    );
+
+
+// =========================================================
+// STATE
+// =========================================================
+
+let mediaRecorder;
+
+let audioChunks = [];
+
+let isRecording = false;
+
+let recordingStartTime = 0;
+
+
+// =========================================================
+// SESSION
+// =========================================================
+
+const sessionId =
+    crypto.randomUUID();
+
+
+// =========================================================
+// START RECORDING
+// =========================================================
+
+async function startRecording() {
+
+    try {
+
+        statusElement.textContent =
+            "Requesting microphone...";
+
+
+        // =================================================
+        // MICROPHONE CONFIGURATION
+        // =================================================
+
+        const stream =
+            await navigator.mediaDevices.getUserMedia({
+
+                audio: {
+
+                    channelCount: 1,
+
+                    echoCancellation: true,
+
+                    noiseSuppression: true,
+
+                    autoGainControl: true
+
+                }
+
+            });
+
+
+        // =================================================
+        // AUDIO TRACK INFORMATION
+        // =================================================
+
+        const audioTrack =
+            stream.getAudioTracks()[0];
+
+
+        console.log(
+            "===================================="
+        );
+
+        console.log(
+            "MICROPHONE INFORMATION"
+        );
+
+        console.log(
+            "===================================="
+        );
+
+
+        console.log(
+            "Microphone:",
+            audioTrack.label
+        );
+
+
+        console.log(
+            "Audio settings:",
+            audioTrack.getSettings()
+        );
+
+
+        console.log(
+            "Audio constraints:",
+            audioTrack.getConstraints()
+        );
+
+
+        // =================================================
+        // FIND SUPPORTED MIME TYPE
+        // =================================================
+
+        let mimeType =
+            "audio/webm;codecs=opus";
+
+
+        if (
+            !MediaRecorder.isTypeSupported(
+                mimeType
+            )
+        ) {
+
+            console.warn(
+                "Preferred MIME type not supported."
+            );
+
+            mimeType = "audio/webm";
+
+        }
+
+
+        if (
+            !MediaRecorder.isTypeSupported(
+                mimeType
+            )
+        ) {
+
+            console.warn(
+                "WebM not supported. Using browser default."
+            );
+
+            mimeType = "";
+
+        }
+
+
+        // =================================================
+        // MEDIA RECORDER
+        // =================================================
+
+        if (mimeType) {
+
+            mediaRecorder =
+                new MediaRecorder(
+                    stream,
+                    {
+                        mimeType: mimeType
+                    }
+                );
+
+        } else {
+
+            mediaRecorder =
+                new MediaRecorder(
+                    stream
+                );
+
+        }
+
+
+        console.log(
+            "Recorder MIME:",
+            mediaRecorder.mimeType
+        );
+
+
+        // =================================================
+        // RESET AUDIO CHUNKS
+        // =================================================
+
+        audioChunks = [];
+
+
+        // =================================================
+        // AUDIO DATA
+        // =================================================
+
+        mediaRecorder.ondataavailable =
+            event => {
+
+                if (
+                    event.data &&
+                    event.data.size > 0
+                ) {
+
+                    audioChunks.push(
+                        event.data
+                    );
+
+                }
+
+            };
+
+
+        // =================================================
+        // RECORDING STOPPED
+        // =================================================
+
+        mediaRecorder.onstop =
+            async () => {
+
+                // -----------------------------------------
+                // Stop microphone
+                // -----------------------------------------
+
+                stream
+                    .getTracks()
+                    .forEach(
+                        track =>
+                            track.stop()
+                    );
+
+
+                // -----------------------------------------
+                // Create audio blob
+                // -----------------------------------------
+
+                const audioBlob =
+                    new Blob(
+                        audioChunks,
+                        {
+                            type:
+                                mediaRecorder.mimeType
+                        }
+                    );
+
+
+                console.log(
+                    "===================================="
+                );
+
+                console.log(
+                    "RECORDED AUDIO"
+                );
+
+                console.log(
+                    "===================================="
+                );
+
+
+                console.log(
+                    "Audio type:",
+                    audioBlob.type
+                );
+
+
+                console.log(
+                    "Audio size:",
+                    audioBlob.size,
+                    "bytes"
+                );
+
+
+                console.log(
+                    "Audio size:",
+                    (
+                        audioBlob.size / 1024
+                    ).toFixed(2),
+                    "KB"
+                );
+
+
+                // -----------------------------------------
+                // Send to backend
+                // -----------------------------------------
+
+                await sendAudio(
+                    audioBlob
+                );
+
+            };
+
+
+        // =================================================
+        // START
+        // =================================================
+
+        mediaRecorder.start();
+
+        recordingStartTime =
+            performance.now();
+
+        isRecording = true;
+
+
+        recordButton.classList.add(
+            "recording"
+        );
+
+
+        recordButton.innerHTML =
+            "⏹️<br>Stop";
+
+
+        statusElement.textContent =
+            "Listening...";
+
+
+        console.log(
+            "Recording started"
+        );
+
+
+    } catch (error) {
+
+        console.error(
+            "Microphone error:",
+            error
+        );
+
+
+        statusElement.textContent =
+            "Microphone access failed";
+
+
+        isRecording = false;
+
+    }
+
+}
+
+
+// =========================================================
+// STOP RECORDING
+// =========================================================
+
+function stopRecording() {
+
+    if (
+        mediaRecorder &&
+        mediaRecorder.state !== "inactive"
+    ) {
+
+        const recordingSeconds =
+            recordingStartTime
+                ? (
+                    (performance.now() -
+                        recordingStartTime) / 1000
+                ).toFixed(2)
+                : "0.00";
+
+        console.log(
+            "Recording duration:",
+            recordingSeconds,
+            "seconds"
+        );
+
+        statusElement.textContent =
+            `Preparing audio... (${recordingSeconds}s)`;
+
+
+        mediaRecorder.stop();
+
+    }
+
+
+    isRecording = false;
+
+
+    recordButton.classList.remove(
+        "recording"
+    );
+
+
+    recordButton.innerHTML =
+        "🎤<br>Record";
+
+}
+
+
+// =========================================================
+// SEND AUDIO
+// =========================================================
+
+async function sendAudio(
+    audioBlob
+) {
+
+    const requestStart =
+        performance.now();
+
+
+    try {
+
+        // =================================================
+        // PROCESSING STATUS
+        // =================================================
+
+        statusElement.textContent =
+            "Uploading and processing...";
+
+
+        recordButton.disabled =
+            true;
+
+
+        // =================================================
+        // CREATE FORM DATA
+        // =================================================
+
+        const formData =
+            new FormData();
+
+
+        formData.append(
+            "audio",
+            audioBlob,
+            "record.webm"
+        );
+
+
+        console.log(
+            "===================================="
+        );
+
+        console.log(
+            "SENDING AUDIO"
+        );
+
+        console.log(
+            "===================================="
+        );
+
+
+        console.log(
+            "Blob size:",
+            audioBlob.size,
+            "bytes"
+        );
+
+
+        console.log(
+            "Blob type:",
+            audioBlob.type
+        );
+
+
+        // =================================================
+        // REQUEST START
+        // =================================================
+
+        const fetchStart =
+            performance.now();
+
+
+        const response =
+            await fetch(
+                `/chat?session_id=${sessionId}`,
+                {
+                    method: "POST",
+                    body: formData
+                }
+            );
+
+
+        // =================================================
+        // RESPONSE RECEIVED
+        // =================================================
+
+        const fetchEnd =
+            performance.now();
+
+
+        const frontendRequestTime =
+            (
+                fetchEnd -
+                fetchStart
+            ) / 1000;
+
+
+        console.log(
+            "Frontend request:",
+            frontendRequestTime.toFixed(3),
+            "seconds"
+        );
+
+
+        // =================================================
+        // CHECK RESPONSE
+        // =================================================
+
+        if (!response.ok) {
+
+            const errorText =
+                await response.text();
+
+
+            console.error(
+                "Server error:",
+                errorText
+            );
+
+
+            throw new Error(
+                `Server error: ${response.status}`
+            );
+
+        }
+
+
+        // =================================================
+        // PARSE RESPONSE
+        // =================================================
+
+        const result =
+            await response.json();
+
+
+        const requestEnd =
+            performance.now();
+
+
+        const totalFrontendTime =
+            (
+                requestEnd -
+                requestStart
+            ) / 1000;
+
+
+        // =================================================
+        // LOG BACKEND TIMINGS
+        // =================================================
+
+        console.log(
+            "===================================="
+        );
+
+        console.log(
+            "PERFORMANCE"
+        );
+
+        console.log(
+            "===================================="
+        );
+
+
+        console.log(
+            "STT:",
+            result.timings?.stt_seconds,
+            "seconds"
+        );
+
+
+        console.log(
+            "Taya:",
+            result.timings?.taya_seconds,
+            "seconds"
+        );
+
+
+        console.log(
+            "TTS:",
+            result.timings?.tts_seconds,
+            "seconds"
+        );
+
+
+        console.log(
+            "Backend total:",
+            result.timings?.total_backend_seconds,
+            "seconds"
+        );
+
+        console.log(
+            "Taya extracted:",
+            result.extracted
+        );
+
+        console.log(
+            "Taya missing fields:",
+            result.missing_fields
+        );
+
+        console.log(
+            "Taya complete:",
+            result.complete
+        );
+
+
+        console.log(
+            "Frontend request:",
+            totalFrontendTime.toFixed(3),
+            "seconds"
+        );
+
+
+        // =================================================
+        // UPDATE UI
+        // =================================================
+
+        transcriptElement.textContent =
+            result.transcript;
+
+
+        responseElement.textContent =
+            result.response;
+
+
+        // =================================================
+        // UPDATE TIMINGS
+        // =================================================
+
+        if (
+            result.timings
+        ) {
+
+            sttTimeElement.textContent =
+                `${result.timings.stt_seconds}s`;
+
+
+            tayaTimeElement.textContent =
+                `${result.timings.taya_seconds}s`;
+
+
+            ttsTimeElement.textContent =
+                `${result.timings.tts_seconds}s`;
+
+
+            backendTimeElement.textContent =
+                `${result.timings.total_backend_seconds}s`;
+
+        } else {
+
+            sttTimeElement.textContent =
+                "N/A";
+
+
+            tayaTimeElement.textContent =
+                "N/A";
+
+
+            ttsTimeElement.textContent =
+                "N/A";
+
+
+            backendTimeElement.textContent =
+                "N/A";
+
+        }
+
+
+        frontendTimeElement.textContent =
+            `${totalFrontendTime.toFixed(2)}s`;
+
+
+        // =================================================
+        // AUDIO PATH
+        // =================================================
+
+        const filename =
+            result.audio_path
+                .split(/[\\/]/)
+                .pop();
+
+
+        const audioUrl =
+            `/audio/${filename}`;
+
+
+        console.log(
+            "Audio URL:",
+            audioUrl
+        );
+
+
+        // =================================================
+        // LOAD RESPONSE AUDIO
+        // =================================================
+
+        audioPlayer.src =
+            audioUrl;
+
+
+        audioPlayer.load();
+
+
+        statusElement.textContent =
+            "Assistant is speaking...";
+
+
+        // =================================================
+        // PLAY AUDIO
+        // =================================================
+
+        try {
+
+            await audioPlayer.play();
+
+        } catch (playError) {
+
+            console.warn(
+                "Autoplay failed:",
+                playError
+            );
+
+            statusElement.textContent =
+                "Ready — press play to hear response";
+
+        }
+
+
+        // =================================================
+        // AUDIO ENDED
+        // =================================================
+
+        audioPlayer.onended =
+            () => {
+
+                statusElement.textContent =
+                    "Ready — record again";
+
+            };
+
+
+    } catch (error) {
+
+        console.error(
+            "Request failed:",
+            error
+        );
+
+
+        statusElement.textContent =
+            "Something went wrong";
+
+
+    } finally {
+
+        recordButton.disabled =
+            false;
+
+    }
+
+}
+
+
+// =========================================================
+// RECORD BUTTON
+// =========================================================
+
+recordButton.addEventListener(
+    "click",
+    async () => {
+
+        if (!isRecording) {
+
+            await startRecording();
+
+        } else {
+
+            stopRecording();
+
+        }
+
+    }
+);
+
+</script>
+
+</body>
+
+</html>

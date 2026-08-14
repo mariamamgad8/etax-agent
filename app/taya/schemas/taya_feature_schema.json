@@ -1,0 +1,215 @@
+{
+  "assistant_name": "Taya",
+  "version": "1.0.0",
+
+  "description": "Schema used by Taya to collect and validate the information required by the existing tax-risk ML model.",
+
+  "onehot_columns": [
+    "Business_Type",
+    "Region"
+  ],
+
+  "ordinal_column": "Industry_Risk",
+
+  "int_columns": [
+    "Years_in_Business",
+    "Employee_Count",
+    "Previous_Audits",
+    "Previous_Violations",
+    "Late_Payments",
+    "Missing_Documents",
+    "Invoice_Mismatch"
+  ],
+
+  "user_fields": {
+
+    "Business_Type": {
+      "type": "string",
+      "required": true,
+      "source": "user",
+      "allowed_values": [
+        "Construction",
+        "Restaurant",
+        "Education",
+        "IT",
+        "Pharmacy",
+        "Import/Export",
+        "Retail",
+        "Manufacturing",
+        "Healthcare"
+      ]
+    },
+
+    "Region": {
+      "type": "string",
+      "required": true,
+      "source": "user",
+      "allowed_values": [
+        "Cairo",
+        "Giza",
+        "Sharqia",
+        "Alex",
+        "Dakahlia",
+        "Sohag",
+        "Assiut",
+        "Monufia"
+      ]
+    },
+
+    "Years_in_Business": {
+      "type": "integer",
+      "required": true,
+      "source": "user",
+      "min": 0
+    },
+
+    "Employee_Count": {
+      "type": "integer",
+      "required": true,
+      "source": "user",
+      "min": 1
+    },
+
+    "Annual_Revenue": {
+      "type": "number",
+      "required": true,
+      "source": "user",
+      "min": 0
+    },
+
+    "Annual_Expenses": {
+      "type": "number",
+      "required": true,
+      "source": "user",
+      "min": 0
+    },
+
+    "Taxable_Income": {
+      "type": "number",
+      "required": true,
+      "source": "user",
+      "min": 0
+    },
+
+    "Declared_Tax": {
+      "type": "number",
+      "required": true,
+      "source": "user",
+      "min": 0
+    },
+
+    "VAT_Collected": {
+      "type": "number",
+      "required": true,
+      "source": "user",
+      "min": 0
+    },
+
+    "VAT_Paid": {
+      "type": "number",
+      "required": true,
+      "source": "user",
+      "min": 0
+    },
+
+    "Previous_Audits": {
+      "type": "integer",
+      "required": true,
+      "source": "user",
+      "min": 0
+    },
+
+    "Previous_Violations": {
+      "type": "integer",
+      "required": true,
+      "source": "user",
+      "min": 0
+    },
+
+    "Late_Payments": {
+      "type": "integer",
+      "required": true,
+      "source": "user",
+      "min": 0
+    },
+
+    "Cash_Transactions_Percentage": {
+      "type": "number",
+      "required": true,
+      "source": "user",
+      "min": 0,
+      "max": 100
+    },
+
+    "Missing_Documents": {
+      "type": "integer",
+      "required": true,
+      "source": "user",
+      "min": 0
+    },
+
+    "Invoice_Mismatch": {
+      "type": "integer",
+      "required": true,
+      "source": "user",
+      "min": 0
+    }
+  },
+
+  "derived_fields": {
+
+    "Industry_Risk": {
+      "type": "string",
+      "source": "system",
+      "allowed_values": [
+        "Low",
+        "Medium",
+        "High"
+      ]
+    },
+
+    "Net_Profit": {
+      "type": "number",
+      "source": "derived"
+    },
+
+    "Expected_Tax": {
+      "type": "number",
+      "source": "derived"
+    },
+
+    "Expense_Ratio": {
+      "type": "number",
+      "source": "derived"
+    },
+
+    "Profit_Margin": {
+      "type": "number",
+      "source": "derived"
+    },
+
+    "Revenue_per_Employee": {
+      "type": "number",
+      "source": "derived"
+    },
+
+    "Tax_Gap": {
+      "type": "number",
+      "source": "derived"
+    }
+  },
+
+  "industry_risk_mapping": {
+    "Construction": "High",
+    "Import/Export": "High",
+
+    "Manufacturing": "Medium",
+    "Restaurant": "Medium",
+    "Retail": "Medium",
+
+    "Education": "Low",
+    "Healthcare": "Low",
+    "IT": "Low",
+    "Pharmacy": "Low"
+  }
+}

@@ -1,0 +1,8 @@
+[
+    {
+        "id": "sample_001",
+        "audio": "record.wav",
+        "reference": "ماشي احنا حاليا بنعمل model detect the face ف عايزين نعرف هل هو فعلا شغال كويس ولا فيه مشاكل و errors",
+        "category": "mixed"
+    }
+]

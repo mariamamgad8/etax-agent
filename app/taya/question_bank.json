@@ -1,0 +1,180 @@
+{
+  "meta": {
+    "greeting": {
+      "ar": "أهلاً بيك 👋 أنا Taya، مساعدك الذكي. تحب نكمل بالعربي ولا English؟",
+      "en": "Hi 👋 I'm Taya, your AI assistant. Would you like to continue in Arabic or English?"
+    },
+    "language_selection": {
+      "ar": "تحب نكمل بالعربي ولا English؟",
+      "en": "Would you like to continue in Arabic or English?"
+    },
+    "language_confirmed": {
+      "ar": "تمام 👌 هنكمل بالعربي. خلينا نبدأ.",
+      "en": "Great! We'll continue in English. Let's get started."
+    },
+    "clarification": {
+      "ar": "معلش، مش متأكد إني فهمت الإجابة بشكل واضح. ممكن تقولها مرة تانية؟",
+      "en": "Sorry, I'm not sure I understood that clearly. Could you say it again?"
+    }
+  },
+  "Business_Type": {
+    "ar": {
+      "question": "إيه نوع النشاط التجاري بتاعك؟",
+      "retry": "معلش، ممكن تقولّي الإجابة مرة تانية؟"
+    },
+    "en": {
+      "question": "What type of business do you have?",
+      "retry": "Sorry, could you say that again?"
+    }
+  },
+  "Region": {
+    "ar": {
+      "question": "في أي محافظة موجود النشاط التجاري بتاعك؟",
+      "retry": "معلش، ممكن تقولّي الإجابة مرة تانية؟"
+    },
+    "en": {
+      "question": "Which governorate is your business located in?",
+      "retry": "Sorry, could you say that again?"
+    }
+  },
+  "Years_in_Business": {
+    "ar": {
+      "question": "بقالك كام سنة شغال في النشاط ده تقريبًا؟",
+      "retry": "معلش، ممكن تقولّي الإجابة مرة تانية؟"
+    },
+    "en": {
+      "question": "How many years have you been in business?",
+      "retry": "Sorry, could you say that again?"
+    }
+  },
+  "Employee_Count": {
+    "ar": {
+      "question": "عندك كام موظف تقريبًا؟",
+      "retry": "معلش، ممكن تقولّي الإجابة مرة تانية؟"
+    },
+    "en": {
+      "question": "Approximately how many employees do you have?",
+      "retry": "Sorry, could you say that again?"
+    }
+  },
+  "Annual_Revenue": {
+    "ar": {
+      "question": "كم تبلغ إيراداتك السنوية تقريبًا؟",
+      "retry": "معلش، ممكن تقولّي الإجابة مرة تانية؟"
+    },
+    "en": {
+      "question": "What is your approximate annual revenue?",
+      "retry": "Sorry, could you say that again?"
+    }
+  },
+  "Annual_Expenses": {
+    "ar": {
+      "question": "كم تبلغ مصروفاتك السنوية تقريبًا؟",
+      "retry": "معلش، ممكن تقولّي الإجابة مرة تانية؟"
+    },
+    "en": {
+      "question": "What are your approximate annual expenses?",
+      "retry": "Sorry, could you say that again?"
+    }
+  },
+  "Taxable_Income": {
+    "ar": {
+      "question": "ما قيمة الدخل الخاضع للضريبة تقريبًا؟",
+      "retry": "معلش، ممكن تقولّي الإجابة مرة تانية؟"
+    },
+    "en": {
+      "question": "What is your approximate taxable income?",
+      "retry": "Sorry, could you say that again?"
+    }
+  },
+  "Declared_Tax": {
+    "ar": {
+      "question": "كم تبلغ قيمة الضريبة التي تم التصريح بها؟",
+      "retry": "معلش، ممكن تقولّي الإجابة مرة تانية؟"
+    },
+    "en": {
+      "question": "What is the amount of tax you declared?",
+      "retry": "Sorry, could you say that again?"
+    }
+  },
+  "VAT_Collected": {
+    "ar": {
+      "question": "كم تبلغ قيمة ضريبة القيمة المضافة التي جمعتها؟",
+      "retry": "معلش، ممكن تقولّي الإجابة مرة تانية؟"
+    },
+    "en": {
+      "question": "How much VAT did you collect?",
+      "retry": "Sorry, could you say that again?"
+    }
+  },
+  "VAT_Paid": {
+    "ar": {
+      "question": "كم تبلغ قيمة ضريبة القيمة المضافة التي دفعتها؟",
+      "retry": "معلش، ممكن تقولّي الإجابة مرة تانية؟"
+    },
+    "en": {
+      "question": "How much VAT did you pay?",
+      "retry": "Sorry, could you say that again?"
+    }
+  },
+  "Previous_Audits": {
+    "ar": {
+      "question": "كم مرة خضع نشاطك لتدقيق أو مراجعة ضريبية من قبل؟",
+      "retry": "معلش، ممكن تقولّي الإجابة مرة تانية؟"
+    },
+    "en": {
+      "question": "How many previous tax audits has your business had?",
+      "retry": "Sorry, could you say that again?"
+    }
+  },
+  "Previous_Violations": {
+    "ar": {
+      "question": "هل سبق أن كانت لديك مخالفات ضريبية؟ وإذا نعم، كم مرة تقريبًا؟",
+      "retry": "معلش، ممكن تقولّي الإجابة مرة تانية؟"
+    },
+    "en": {
+      "question": "Have you had any previous tax violations? If yes, approximately how many?",
+      "retry": "Sorry, could you say that again?"
+    }
+  },
+  "Late_Payments": {
+    "ar": {
+      "question": "كم مرة اتأخرت في سداد الضرائب أو الرسوم؟",
+      "retry": "معلش، ممكن تقولّي الإجابة مرة تانية؟"
+    },
+    "en": {
+      "question": "How many times have you been late paying taxes or fees?",
+      "retry": "Sorry, could you say that again?"
+    }
+  },
+  "Cash_Transactions_Percentage": {
+    "ar": {
+      "question": "ما النسبة التقريبية للمعاملات النقدية في نشاطك؟",
+      "retry": "معلش، ممكن تقولّي الإجابة مرة تانية؟"
+    },
+    "en": {
+      "question": "Approximately what percentage of your transactions are cash transactions?",
+      "retry": "Sorry, could you say that again?"
+    }
+  },
+  "Missing_Documents": {
+    "ar": {
+      "question": "كم عدد المستندات المهمة أو المطلوبة اللي مش متوفرة عندك حاليًا؟",
+      "retry": "معلش، ممكن تقولّي الإجابة مرة تانية؟"
+    },
+    "en": {
+      "question": "How many required or important documents are currently missing?",
+      "retry": "Sorry, could you say that again?"
+    }
+  },
+  "Invoice_Mismatch": {
+    "ar": {
+      "question": "هل توجد اختلافات أو عدم تطابق في الفواتير؟ وإذا نعم، كم حالة تقريبًا؟",
+      "retry": "معلش، ممكن تقولّي الإجابة مرة تانية؟"
+    },
+    "en": {
+      "question": "Are there any invoice mismatches? If yes, approximately how many?",
+      "retry": "Sorry, could you say that again?"
+    }
+  }
+}

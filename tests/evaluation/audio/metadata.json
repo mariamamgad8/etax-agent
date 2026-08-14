@@ -1,0 +1,32 @@
+[
+    {
+        "id": "sample_001",
+        "audio": "sample_001.wav",
+        "reference": "ممكن تقولي حالة الحساب بتاعي",
+        "category": "arabic"
+    },
+    {
+        "id": "sample_002",
+        "audio": "sample_002.wav",
+        "reference": "I want to check my account status",
+        "category": "english"
+    },
+    {
+        "id": "sample_003",
+        "audio": "sample_003.wav",
+        "reference": "ماشي احنا حاليا بنعمل model detect the face",
+        "category": "mixed"
+    },
+    {
+        "id": "sample_004",
+        "audio": "sample_004.wav",
+        "reference": "عايز اعمل training للموديل وبعد كده evaluate the performance",
+        "category": "technical"
+    },
+    {
+        "id": "sample_005",
+        "audio": "sample_005.wav",
+        "reference": "ال model عنده high accuracy بس محتاجين نعمل error analysis",
+        "category": "mixed"
+    }
+]
