@@ -1,0 +1,49 @@
+DEFAULT_THRESHOLDS = {"XGBoost": 0.195}
+
+ONEHOT_COLS = ["Business_Type", "Region"]
+ORDINAL_COL = "Industry_Risk"
+ORDINAL_ORDER = ["Low", "Medium", "High"]
+
+NUMERIC_COLS = [
+    "Years_in_Business", "Employee_Count", "Annual_Revenue", "Annual_Expenses",
+    "Net_Profit", "Taxable_Income", "Expected_Tax", "Declared_Tax",
+    "VAT_Collected", "VAT_Paid", "Previous_Audits", "Previous_Violations",
+    "Late_Payments", "Cash_Transactions_Percentage", "Missing_Documents",
+    "Invoice_Mismatch", "Expense_Ratio", "Profit_Margin",
+    "Revenue_per_Employee", "Tax_Gap",
+]
+# Integer-valued columns, used only to pick the Gradio widget precision below.
+INT_COLS = [
+    "Years_in_Business", "Employee_Count", "Previous_Audits",
+    "Previous_Violations", "Late_Payments", "Missing_Documents",
+    "Invoice_Mismatch",
+]
+
+REGION_OPTIONS = [
+    "Sharqia",
+    "Giza",
+    "Alex",
+    "Cairo",
+    "Dakahlia",
+    "Monufia",
+    "Sohag",
+    "Assiut",
+    "Unknown",
+]
+BUSINESS_TYPE_OPTIONS = [
+    "Construction",
+    "Restaurant",
+    "Education",
+    "IT",
+    "Pharmacy",
+    "Import/Export",
+    "Retail",
+    "Manufacturing",
+    "Healthcare",
+    "Unknown",
+]
+INDUSTRY_RISK_OPTIONS = [
+    "Low",
+    "Medium",
+    "High",
+]

@@ -1,0 +1,35 @@
+# --- Secrets ---
+# Real API keys/credentials live here locally only — .env.example is the
+# committed template everyone fills in with their own keys.
+.env
+.env.local
+*.env
+!*.env.example
+
+# --- Python / backend ---
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+*.egg-info/
+
+# --- Node / frontend ---
+node_modules/
+dist/
+dist-ssr/
+*.local
+
+# --- Editor / OS ---
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# --- Claude Code local session state (not shared project config) ---
+.claude/settings.local.json
+.claude/scheduled_tasks.lock
+
+# --- Runtime data (SQLite demo DB, if ever generated outside the Docker volume) ---
+*.sqlite3
+*.db

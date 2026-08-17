@@ -1,0 +1,95 @@
+services:
+  db:
+    image: pgvector/pgvector:pg16
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-etax}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-etax_pw}
+      POSTGRES_DB: ${POSTGRES_DB:-etax}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-etax} -d ${POSTGRES_DB:-etax}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  backend:
+    build: ./backend
+    restart: unless-stopped
+    # --reload + the bind mount below make code edits take effect without a
+    # full image rebuild (which otherwise re-downloads the face models).
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql+psycopg2://${POSTGRES_USER:-etax}:${POSTGRES_PASSWORD:-etax_pw}@db:5432/${POSTGRES_DB:-etax}
+      JWT_SECRET_KEY: ${JWT_SECRET_KEY:-dev-secret-change-me}
+      ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-http://localhost:5173}
+      INSIGHTFACE_MODEL_PACK: buffalo_l
+      MATCH_THRESHOLD: "0.45"
+      LIVENESS_THRESHOLD: "0.85"
+      COHERE_API_KEY: ${COHERE_API_KEY:-}
+      GROQ_API_KEY: ${GROQ_API_KEY:-}
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      ELEVENLABS_TTS_KEY: ${ELEVENLABS_TTS_KEY:-}
+      STT_DETECT_PROVIDER: ${STT_DETECT_PROVIDER:-groq}
+      STT_TRANSCRIBE_PROVIDER: ${STT_TRANSCRIBE_PROVIDER:-cohere}
+      COHERE_STT_MODEL: ${COHERE_STT_MODEL:-cohere-transcribe-03-2026}
+      COHERE_STT_LANGUAGE: ${COHERE_STT_LANGUAGE:-ar}
+      GROQ_STT_MODEL: ${GROQ_STT_MODEL:-whisper-large-v3-turbo}
+      GROQ_STT_PROMPT: ${GROQ_STT_PROMPT:-Tax conversation. Preserve Arabic and English words, taxpayer IDs, numbers, VAT, revenue, expenses, company names and tax terminology.}
+      LLM_PROVIDER_ORDER: ${LLM_PROVIDER_ORDER:-groq,gemini}
+      GROQ_LLM_MODELS: ${GROQ_LLM_MODELS:-openai/gpt-oss-20b,llama-3.1-8b-instant,llama-3.3-70b-versatile,openai/gpt-oss-120b}
+      GEMINI_LLM_MODELS: ${GEMINI_LLM_MODELS:-gemini-flash-latest}
+      SQL_CHAIN_MODEL: ${SQL_CHAIN_MODEL:-openai/gpt-oss-20b}
+      TTS_PROVIDER_ORDER: ${TTS_PROVIDER_ORDER:-elevenlabs,gemini}
+      ELEVENLABS_MODEL: ${ELEVENLABS_MODEL:-eleven_multilingual_v2}
+      ELEVENLABS_VOICE_ID: ${ELEVENLABS_VOICE_ID:-}
+      GEMINI_TTS_MODEL: ${GEMINI_TTS_MODEL:-gemini-2.5-flash-preview-tts}
+      GEMINI_TTS_VOICE: ${GEMINI_TTS_VOICE:-Kore}
+      MODEL_COOLDOWN_SECONDS: ${MODEL_COOLDOWN_SECONDS:-60}
+      DEMO_DB_PATH: ${DEMO_DB_PATH:-/workspace/data/demo_tax.db}
+    ports:
+      - "8000:8000"
+    volumes:
+      # Caches the auto-downloaded insightface model pack across restarts.
+      - insightface_models:/root/.insightface
+      # Synthetic demo tax DB (SQLite) — separate from the real Postgres auth DB.
+      - demo_tax_db:/workspace/data
+      # Dev-only live-reload mount — remove for a production deployment.
+      - ./backend/app:/workspace/app
+
+  frontend:
+    build: ./frontend
+    restart: unless-stopped
+    depends_on:
+      - backend
+    environment:
+      VITE_API_BASE_URL: ${VITE_API_BASE_URL:-http://localhost:8000}
+    ports:
+      - "5173:5173"
+    volumes:
+      # Dev-only live-reload mount (Vite HMR) — remove for a production build.
+      - ./frontend/src:/app/src
+      - ./frontend/public:/app/public
+      - ./frontend/index.html:/app/index.html
+
+  pgadmin:
+    image: dpage/pgadmin4:latest
+    restart: unless-stopped
+    environment:
+      PGADMIN_DEFAULT_EMAIL: admin@etax.com
+      PGADMIN_DEFAULT_PASSWORD: admin123
+    ports:
+      - "5050:80"
+    depends_on:
+      - db
+
+volumes:
+  pgdata:
+  insightface_models:
+  demo_tax_db:

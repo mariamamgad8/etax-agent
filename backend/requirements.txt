@@ -1,0 +1,48 @@
+fastapi==0.111.0
+uvicorn[standard]==0.30.1
+python-multipart==0.0.9
+pydantic[email]==2.13.4
+
+insightface==0.7.3
+onnxruntime==1.18.0
+opencv-python-headless==4.9.0.80
+numpy==1.26.4
+
+SQLAlchemy==2.0.30
+psycopg2-binary==2.9.9
+pgvector==0.2.5
+python-dotenv==1.0.1
+
+PyJWT==2.8.0
+argon2-cffi==23.1.0
+
+# --- Chatbot agent: STT / LLM / (later) TTS providers + orchestration ---
+# groq is pinned to whatever langchain-groq's dependency resolution actually
+# installs (0.37.1, much older than the 1.6.0 we started with) — confirmed
+# live that our own provider layer (app/chat/providers/llm.py, plain
+# chat.completions.create + strict json_schema mode) still works unchanged
+# against that older SDK version.
+groq==0.37.1
+google-genai==2.18.1
+cohere==7.0.8
+langgraph==1.2.11
+# Was already installed transitively (via groq/google-genai); pinned
+# explicitly now that app/chat/providers/tts.py calls it directly for the
+# ElevenLabs REST API (no ElevenLabs SDK dependency needed for one endpoint).
+httpx==0.28.1
+
+# --- database_query: SQLDatabaseChain experiment + the LLM used for it ---
+# (see app/chat/db/query_chain.py's docstring for why the live graph uses a
+# different, hand-rolled path instead of SQLDatabaseChain itself)
+langchain==1.3.15
+langchain-community==0.4.2
+langchain-experimental==0.4.2
+langchain-groq==1.1.3
+
+# --- Fraud model (xgboost_fraud_model.joblib) ---
+# scikit-learn pinned to match the version the encoders were pickled with
+# (1.3.2) — a newer sklearn loads them but warns of possible drift.
+scikit-learn==1.3.2
+xgboost==3.2.0
+pandas==2.3.3
+joblib==1.5.3

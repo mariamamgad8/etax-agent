@@ -1,0 +1,14 @@
+:root{
+--space-1:4px;--space-2:8px;--space-3:12px;--space-4:16px;--space-5:20px;--space-6:24px;--space-8:32px;--space-10:40px;--space-12:48px;--space-16:64px;--space-20:80px;--space-24:96px;
+--radius-xs:2px;--radius-sm:4px;--radius-md:6px;--radius-lg:10px;--radius-pill:999px;
+--container-sm:440px; /* @kind spacing */
+--container-md:720px; /* @kind spacing */
+--container-lg:1080px; /* @kind spacing */
+--container-xl:1280px; /* @kind spacing */
+--control-h-sm:32px; /* @kind spacing */
+--control-h-md:40px; /* @kind spacing */
+--control-h-lg:48px; /* @kind spacing */
+--border-w:1px; /* @kind spacing */
+--border-w-strong:2px; /* @kind spacing */
+--rule-accent-w:3px; /* @kind spacing */
+}
