@@ -1,8 +1,10 @@
 import React from 'react';
+import { useLanguage } from '../../i18n/LanguageContext.jsx';
 import { IconButton } from '../core/IconButton.jsx';
 
 /** Message composer with microphone and send controls, plus the listening state. */
-export function ChatComposer({ placeholder = 'Ask about tax data or request a tax prediction…', value, onChange, onSend, onMicToggle, listening, disabled, hint, style, ...rest }) {
+export function ChatComposer({ placeholder, value, onChange, onSend, onMicToggle, listening, disabled, hint, style, ...rest }) {
+  const { t } = useLanguage();
   const [text, setText] = React.useState('');
   const controlled = value !== undefined;
   const v = controlled ? value : text;
@@ -18,7 +20,7 @@ export function ChatComposer({ placeholder = 'Ask about tax data or request a ta
       }}>
         <textarea
           rows={1} value={v} disabled={disabled}
-          placeholder={listening ? 'Listening…' : placeholder}
+          placeholder={listening ? t('chat.composerListening') : (placeholder ?? t('chat.composerPlaceholder'))}
           onChange={(e) => set(e.target.value)}
           onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); } }}
           style={{
@@ -29,13 +31,13 @@ export function ChatComposer({ placeholder = 'Ask about tax data or request a ta
         />
         <IconButton
           icon={listening ? 'square' : 'mic'}
-          label={listening ? 'Stop listening' : 'Speak your question'}
+          label={listening ? t('chat.micStop') : t('chat.micSpeak')}
           tone="ghost"
           active={listening}
           disabled={disabled && !listening}
           onClick={onMicToggle}
         />
-        <IconButton icon="send" label="Send message" tone="navy" disabled={!v || !v.trim()} onClick={send} />
+        <IconButton icon="send" label={t('chat.send')} tone="navy" disabled={!v || !v.trim()} onClick={send} />
       </div>
       {hint && <span style={{ fontSize: 'var(--text-caption)', color: 'var(--text-muted)' }}>{hint}</span>}
     </div>

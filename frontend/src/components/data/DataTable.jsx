@@ -1,9 +1,18 @@
 import React from 'react';
+import { useLanguage } from '../../i18n/LanguageContext.jsx';
 
 /** Plain records table: 1px rules, tabular numerals, no zebra striping. */
 export function DataTable({ columns = [], rows = [], caption, style, ...rest }) {
+  const { t } = useLanguage();
   const align = (c) => (typeof c === 'object' && c.numeric ? 'right' : 'left');
   const label = (c) => (typeof c === 'string' ? c : c.label);
+  if (rows.length === 0) {
+    return (
+      <div {...rest} style={{ border: '1px solid var(--border-subtle)', borderRadius: 'var(--radius-sm)', padding: 'var(--space-4)', textAlign: 'center', fontSize: 'var(--text-body-sm)', color: 'var(--text-muted)', ...style }}>
+        {t('table.empty')}
+      </div>
+    );
+  }
   return (
     <div {...rest} style={{ border: '1px solid var(--border-subtle)', borderRadius: 'var(--radius-sm)', overflow: 'hidden', ...style }}>
       <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 'var(--text-body-sm)' }}>

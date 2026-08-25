@@ -1,0 +1,8 @@
+Net_Profit
+Taxable_Income
+Declared_Tax
+Previous_Violations
+Cash_Transactions_Percentage
+Invoice_Mismatch
+Tax_Gap
+Industry_Risk_ord

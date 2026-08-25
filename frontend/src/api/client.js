@@ -61,6 +61,12 @@ export const api = {
       token,
       body: { thread_id: threadId, form_response: formResponse },
     }),
+  extractFraudFields: (token, text, currentFields) =>
+    request('/chat/fraud/extract', {
+      method: 'POST',
+      token,
+      body: { text, current_fields: currentFields || {} },
+    }),
   transcribeAudio: (token, blob, filename) => {
     const form = new FormData();
     form.append('audio', blob, filename);

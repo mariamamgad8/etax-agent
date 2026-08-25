@@ -1,15 +1,19 @@
 import React from 'react';
 import { Link } from 'react-router-dom';
+import { useLanguage } from '../../i18n/LanguageContext.jsx';
 import { LOGO_SRC } from '../../constants.js';
+import { LanguageSwitcher } from '../navigation/LanguageSwitcher.jsx';
 import { Logo } from '../core/Logo.jsx';
 
 export function AuthShell({ title, description, children, footer }) {
+  const { t } = useLanguage();
   return (
     <div style={{ minHeight: '100vh', background: 'var(--surface-page)', display: 'flex', flexDirection: 'column' }}>
       <header style={{ display: 'flex', alignItems: 'center', height: 72, padding: '0 var(--space-8)', background: 'var(--white)', borderBottom: '1px solid var(--border-subtle)' }}>
         <Link to="/" style={{ border: 'none', display: 'inline-flex' }}>
-          <Logo height={30} src={LOGO_SRC} subtitle="Tax Assistant" />
+          <Logo height={30} src={LOGO_SRC} subtitle={t('common.tagline')} />
         </Link>
+        <LanguageSwitcher style={{ marginInlineStart: 'auto' }} />
       </header>
       <main style={{ flex: 1, display: 'flex', justifyContent: 'center', padding: 'var(--space-12) var(--space-4)' }}>
         <div style={{ width: '100%', maxWidth: 480 }}>

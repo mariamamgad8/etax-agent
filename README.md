@@ -3,26 +3,52 @@
 **Phase 1 (done):** Landing → Signup/Login → Face enrollment/verification →
 authenticated Chatbot UI shell.
 
-**Phase 2 (in progress) — chatbot agent.** Two of the seven intents are fully
-real end to end (UI included), the other five are still routing
-placeholders:
+**Phase 2 (in progress) — chatbot agent.** Six intents total (`greeting`,
+`fraud_assessment`, `database_query`, `other`, `unclear`, `multi_intent` —
+cut down from an earlier 8-intent set after `assistant_identity`/
+`tax_conversation`/`off_topic` proved unreliable to keep separate and were
+collapsed into `other`; see `CLAUDE.md`). `fraud_assessment` and
+`database_query` are fully real end to end (UI included); `greeting`/
+`other`/`unclear`/`multi_intent` answer from curated deterministic templates
+(no LLM call for the reply itself):
 - **fraud_assessment** — LLM extracts whatever the message mentions → a
-  LangGraph `interrupt()` always shows the full 23-field form (prefilled,
-  never auto-run even if every field was extracted) → Python validation
-  loops back to the same form on invalid input → the trained XGBoost model
-  → a plain-language result with the required hedging line.
-- **database_query** — the message is translated to an internal English
-  question → the LLM writes a single SQL `SELECT` against the synthetic demo
-  DB → Python enforces SELECT-only before executing → the LLM phrases a
-  short factual answer **in the user's original language** (detected, not
-  guessed), with the full result set also returned as a real data table.
+  LangGraph `interrupt()` always shows the 23-field form (prefilled, never
+  auto-run even if every field was extracted), split into 8 required fields
+  (enough on their own for a "Standard Assessment") and 15 optional ones
+  (filling all of them unlocks a "Comprehensive Assessment") → Python
+  validation requires only the 8, loops back to the same form on invalid
+  input → one of two trained XGBoost models depending on exactly how many
+  fields are present — never the full model with gaps filled by
+  medians/modes → a plain-language result with the required hedging line.
+  The user can also type/paste more feature text into the chat while the
+  form is showing (`POST /chat/fraud/extract`) to fill it in without
+  submitting.
+- **database_query** — ownership-aware: a user with no company shares never
+  reaches the SQL-generating LLM at all. Otherwise the message is translated
+  to an internal English question → the LLM writes a single SQL `SELECT`
+  restricted (by a real SQL parse tree, not a string check) to only the
+  secure view(s) matching that user's per-company majority/minority holdings
+  → executed as an unprivileged Postgres role with row-level security
+  enforced → the LLM phrases a short factual answer in `state["response_language"]`
+  (set once per turn from the user's own message, not re-detected/guessed
+  per response), with the full result set also returned as a real data
+  table. See `CLAUDE.md`'s "Ownership-aware SQL security" for the full design.
+- **greeting / other / unclear / multi_intent** — a deterministic pre-router
+  in `route_intent` catches, in order: an obvious standalone greeting ("Hi",
+  "مرحبا"); a pasted `Field: value` fraud-feature dump; or an explicit
+  fraud-leaning keyword ("سليم"/"فحص"/"check"/"assess" — unless a stronger
+  database-retrieval verb is also present) — routing straight to
+  `fraud_assessment` without ever calling the classifier for these. A
+  greeting attached to a real request ("Hi, show my taxes.") still goes
+  through the classifier. All four reply from curated bilingual template
+  pools (`responses.py`) rather than a response-generation LLM call.
 
 The chat UI (`/chat`) calls the real backend now — text messages, the fraud
 form (dropdowns/inputs generated from the backend's schema, not
 hand-duplicated), query result tables, a working mic (speech-to-text) and a
 voice-replies toggle (text-to-speech) all work. The controlled SQL subgraph
-(replacing today's minimal version) and `unclear`/`multi_intent` interrupts
-are not built yet — see `backend/app/chat/` for what exists.
+(replacing today's minimal version) is not built yet — see `backend/app/chat/`
+for what exists.
 
 ## Structure
 
@@ -30,9 +56,9 @@ are not built yet — see `backend/app/chat/` for what exists.
 backend/                 FastAPI API — auth, face enrollment/verification, chat agent, PostgreSQL+pgvector
 frontend/                React (Vite) — ported eTax design system + the six product pages
 docs/                    Deep-dive docs: chatbot flow, codebase review, debugging guide
-ml_artifacts/            Source fraud-model artifacts (ML_inputs_details.txt + the 3 .joblib
-                          files) — the copies actually used at runtime live in
-                          backend/app/chat/fraud/models/, baked into the backend image
+ml_artifacts/            Source fraud-model artifacts (ML_inputs_details.txt, feature_importance_table.csv,
+                          xgboost_8features_columns.txt + the 4 .joblib files) — the copies actually
+                          used at runtime live in backend/app/chat/fraud/models/, baked into the backend image
 system_design_UI.zip     Source design system this frontend was built from
 docker-compose.yml       db + backend + frontend
 .env.example             Template for all required API keys/config — copy to .env and fill in
@@ -98,33 +124,32 @@ graph.py              LangGraph: route_intent -> branch; fraud_assessment is a r
                       the other six are still placeholders
 routes.py             POST /chat/message — requires stage=authenticated, handles
                       both starting a run and resuming an interrupted one
-fraud/schema.py       FraudFeatures (all-Optional extraction model), option lists,
-                      exact 40-feature order confirmed from the live .joblib artifacts
+fraud/schema.py       FraudFeatures (all-Optional extraction model), option lists, the
+                      8 required / 15 optional field split (CORE_REQUIRED_FIELDS/
+                      OPTIONAL_FIELDS, read from xgboost_8features_columns.txt), exact
+                      40-feature order confirmed from the live .joblib artifacts
 fraud/extraction.py   LLM extraction — never guesses; unmentioned fields stay null
-fraud/validation.py   Python validation of the confirmed form (required, types, ranges)
-fraud/engine.py       Loads onehot/ordinal encoders + XGBoost model, runs the prediction
-fraud/models/         The three .joblib artifacts (source copies in ml_artifacts/ at repo root)
-db/schema.py           taxpayers + tax_returns CREATE TABLE statements
-db/seed.py             Deterministic synthetic data generator (fixed seed — same
-                       data on every fresh build), reuses the fraud module's
-                       Business_Type/Region/Industry_Risk options for consistency
-db/connection.py        get_connection() / ensure_ready() — creates + seeds on
-                       first use, idempotent (checked: identical row counts
-                       across a restart), called from main.py's startup hook
-db/query_chain.py       The SQLDatabaseChain experiment (ask_database — kept as
-                       documented, live-tested evidence, not used by the graph)
-                       + generate_and_run_sql, the reliable hand-rolled path the
-                       live database_query branch actually calls
+fraud/validation.py   Python validation — only the 8 core fields are required; the rest
+                      are validated (type/range/category) only if provided
+fraud/engine.py       Loads onehot/ordinal encoders + both XGBoost models, routes to
+                      whichever matches exactly how many of the 23 fields are present
+                      (never a partial run of the full model with gaps imputed)
+fraud/models/         The four .joblib artifacts (source copies in ml_artifacts/ at repo root)
+db/seed.py             ensure_ready() — loads the tax schema's example dataset (3
+                       companies, 5 transactions, 5 items) if empty, idempotent,
+                       called from main.py's startup hook
+db/security.py          get_user_ownership_status(db_conn, user_id) — the only
+                       source of truth for per-company majority/minority access
+db/query_chain.py       The SQLDatabaseChain experiment (ask_database) + a
+                       non-ownership-aware generate_and_run_sql — both kept as
+                       documented, live-tested evidence; NEITHER is used by the
+                       live graph (see the module's own docstring)
+services/sql_runner.py  handle_user_database_query(...) — the ownership-aware
+                       path database_query actually calls; see CLAUDE.md's
+                       "Ownership-aware SQL security"
 ```
 
-The demo DB lives at `DEMO_DB_PATH` (default `/workspace/data/demo_tax.db`,
-a named Docker volume — `demo_tax_db` — so it survives restarts) and is
-purely synthetic: 60 taxpayers (IDs starting at 1000, so "taxpayer 1002"
-from the project examples resolves to a real row), 2-4 tax returns each
-across 2022-2025, with a real proportion of returns having declared_tax
-below expected_tax so the roadmap's example query ("who has declared tax
-less than expected tax") has genuine rows to find. Nothing here touches the
-real Postgres auth database.
+Tax data lives in the same Postgres database as auth data (`app.config.DATABASE_URL`), under a separate `tax` schema — see "One PostgreSQL database, two schemas" in `CLAUDE.md` for the full table layout (`taxpayers`, `companies`, `company_owners`, `transactions`, `items`). `db/seed.py` loads a small example dataset (Bright Future Academy / GlobalBuild Corp / City Medical Center, with a handful of transactions and items) so `database_query` has real rows to answer against — this is the literal sample data supplied for development, not generated business records; real seed/import data replaces it separately. There is no SQLite anywhere in the app anymore.
 
 `POST /chat/message` (Bearer token) either starts a run (`{"message": "..."}`,
 `thread_id` optional — server mints one) or resumes a paused one
@@ -153,8 +178,11 @@ place each.
 Tried it as the roadmap asked, live-tested it against the demo DB across
 several question phrasings, and it's not reliable enough to wire into the
 graph with these providers — kept as `db/query_chain.py`'s `ask_database`
-for the record, but `database_query` calls `generate_and_run_sql` instead
-(same idea — LLM writes SQL, Python executes it — through `call_llm_text`'s
+for the record. `database_query` doesn't call `generate_and_run_sql` from
+that module either (also kept only as a reference implementation, and
+deliberately never wired in since it has no per-user authorization at all) —
+it calls `services/sql_runner.py`'s ownership-aware `handle_user_database_query`
+instead (same idea — LLM writes SQL, Python executes it — through `call_llm_text`'s
 chat-style prompting, which has been reliable everywhere else in this
 project). Confirmed failure modes, same query/model, deterministic across
 repeated runs:
@@ -172,6 +200,13 @@ repeated runs:
 - Some questions ("Show me all Cairo taxpayers.") worked fine — this isn't a
   config mistake, the approach is just inconsistent, which is exactly the
   concern the roadmap raised about trusting this chain.
+
+(This investigation predates the PostgreSQL unification below — it ran
+against the old SQLite demo DB and its `taxpayers`/`tax_returns` schema,
+which no longer exists. The conclusion about `SQLDatabaseChain`'s
+unreliability doesn't depend on which database backs it, so it's kept as-is;
+`ask_database` itself has been repointed at the current Postgres `tax`
+schema.)
 
 Manual smoke tests (need real API keys in `.env`, run live provider calls):
 

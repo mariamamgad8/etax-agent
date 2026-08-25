@@ -89,6 +89,29 @@ NUMERIC_FIELD_ORDER = [
 
 ALL_FIELDS = NUMERIC_FIELD_ORDER + CATEGORICAL_FIELDS
 
+# The 8 raw fields backend/app/chat/fraud/models/xgboost_8features.joblib
+# needs — read directly from ml_artifacts/xgboost_8features_columns.txt
+# (its 8th entry, Industry_Risk_ord, is the ordinal-encoded form of the raw
+# Industry_Risk field below; see fraud/engine.py's CORE_FEATURE_ORDER for the
+# post-encoding order the model itself expects). A benchmark on the real
+# training data found this dedicated 8-feature model (PR-AUC 0.8305) actually
+# outperforms the 23-feature model with the missing 15 imputed by
+# median/mode (PR-AUC 0.8259) — so a partial form is never padded with
+# defaults; it runs this model on exactly these 8 fields instead. Only when
+# literally all 23 fields are present does the full model run.
+CORE_REQUIRED_FIELDS = [
+    "Net_Profit",
+    "Taxable_Income",
+    "Declared_Tax",
+    "Previous_Violations",
+    "Cash_Transactions_Percentage",
+    "Invoice_Mismatch",
+    "Tax_Gap",
+    "Industry_Risk",
+]
+
+OPTIONAL_FIELDS = [f for f in ALL_FIELDS if f not in CORE_REQUIRED_FIELDS]
+
 FRAUD_THRESHOLD = 0.195
 
 
@@ -96,8 +119,9 @@ class FraudFeatures(BaseModel):
     """
     Every field is optional because this is an EXTRACTION result, not a
     validated/complete form — the LLM must leave anything the user didn't
-    mention as null rather than guess a value. All 23 fields are still
-    required before a prediction can run; see fraud/validation.py.
+    mention as null rather than guess a value. Only the 8 fields in
+    CORE_REQUIRED_FIELDS are actually required before a prediction can run;
+    see fraud/validation.py.
     """
 
     model_config = ConfigDict(extra="forbid")

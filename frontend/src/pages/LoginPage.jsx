@@ -2,6 +2,7 @@ import React from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { ApiError, api } from '../api/client.js';
 import { useAuth } from '../auth/AuthContext.jsx';
+import { useLanguage } from '../i18n/LanguageContext.jsx';
 import { AuthShell } from '../components/auth/AuthShell.jsx';
 import { Button } from '../components/core/Button.jsx';
 import { Icon } from '../components/core/Icon.jsx';
@@ -12,6 +13,7 @@ import { TextField } from '../components/forms/TextField.jsx';
 export function LoginPage() {
   const navigate = useNavigate();
   const { setSession } = useAuth();
+  const { t } = useLanguage();
   const [username, setUsername] = React.useState('');
   const [password, setPassword] = React.useState('');
   const [error, setError] = React.useState('');
@@ -26,7 +28,7 @@ export function LoginPage() {
       setSession(res);
       navigate(res.stage === 'pending_enrollment' ? '/face-enrollment' : '/face-verification');
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Something went wrong. Try again.');
+      setError(err instanceof ApiError ? err.message : t('auth.genericError'));
     } finally {
       setSubmitting(false);
     }
@@ -34,21 +36,21 @@ export function LoginPage() {
 
   return (
     <AuthShell
-      title="Log in"
-      description="Face verification follows once your credentials are accepted."
-      footer={<>No account yet? <Link to="/signup">Create one</Link></>}
+      title={t('auth.loginTitle')}
+      description={t('auth.loginDescription')}
+      footer={<>{t('auth.noAccountYet')} <Link to="/signup">{t('auth.createOne')}</Link></>}
     >
       <form onSubmit={submit} style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-4)' }}>
-        {error && <Alert tone="danger" title="Sign-in failed">{error}</Alert>}
-        <TextField label="Email or username" required value={username} onChange={(e) => setUsername(e.target.value)} />
-        <TextField label="Password" type="password" revealable required value={password} onChange={(e) => setPassword(e.target.value)} />
+        {error && <Alert tone="danger" title={t('auth.signInFailed')}>{error}</Alert>}
+        <TextField label={t('auth.usernameLabel')} required value={username} onChange={(e) => setUsername(e.target.value)} />
+        <TextField label={t('auth.passwordLabel')} type="password" revealable required value={password} onChange={(e) => setPassword(e.target.value)} />
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-          <Checkbox label="Remember this device" />
-          <a href="#" style={{ fontSize: 'var(--text-body-sm)' }}>Forgot password?</a>
+          <Checkbox label={t('auth.rememberDevice')} />
+          <a href="#" style={{ fontSize: 'var(--text-body-sm)' }}>{t('auth.forgotPassword')}</a>
         </div>
-        <Button type="submit" size="lg" fullWidth disabled={submitting}>{submitting ? 'Signing in…' : 'Log in'}</Button>
+        <Button type="submit" size="lg" fullWidth disabled={submitting}>{submitting ? t('auth.loginSubmitting') : t('auth.loginSubmit')}</Button>
         <p style={{ fontSize: 'var(--text-caption)', color: 'var(--text-muted)', display: 'flex', gap: 'var(--space-2)', alignItems: 'center' }}>
-          <Icon name="lock" size={13} /> Do not share your credentials. eTax staff will never ask for your password.
+          <Icon name="lock" size={13} /> {t('auth.credentialsNotice')}
         </p>
       </form>
     </AuthShell>

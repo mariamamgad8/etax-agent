@@ -27,10 +27,18 @@ RUN pip install --no-cache-dir --default-timeout=180 --retries 10 \
 RUN pip install --no-cache-dir --default-timeout=180 --retries 10 -r requirements.txt
 
 COPY app ./app
+COPY tests ./tests
+COPY pytest.ini .
 
 # Pre-warm both models at BUILD time (not on the first live request).
 RUN python -c "from insightface.app import FaceAnalysis; FaceAnalysis(name='buffalo_l', providers=['CPUExecutionProvider']).prepare(ctx_id=0, det_size=(640, 640))"
 RUN python -c "import sys; sys.path.insert(0, '/workspace'); from app.face import liveness_engine; liveness_engine.get_model(); print('anti-spoofing model loaded ok')"
+
+# Piper TTS voice models (local/offline, no API key, no rate limit) — baked
+# in at build time like the models above rather than downloaded on first
+# use. en_US-lessac-medium / ar_JO-kareem-medium confirmed live as real,
+# working English/Arabic voices; see app/chat/providers/tts.py.
+RUN python -m piper.download_voices en_US-lessac-medium ar_JO-kareem-medium --download-dir /workspace/piper_voices
 
 EXPOSE 8000
 CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]

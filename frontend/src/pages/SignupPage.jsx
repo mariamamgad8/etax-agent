@@ -2,6 +2,7 @@ import React from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { ApiError, api } from '../api/client.js';
 import { useAuth } from '../auth/AuthContext.jsx';
+import { useLanguage } from '../i18n/LanguageContext.jsx';
 import { AuthShell } from '../components/auth/AuthShell.jsx';
 import { Button } from '../components/core/Button.jsx';
 import { Alert } from '../components/feedback/Alert.jsx';
@@ -13,6 +14,7 @@ const INITIAL = { full_name: '', username: '', email: '', password: '', confirm_
 export function SignupPage() {
   const navigate = useNavigate();
   const { setSession } = useAuth();
+  const { t } = useLanguage();
   const [values, setValues] = React.useState(INITIAL);
   const [agree, setAgree] = React.useState(false);
   const [error, setError] = React.useState('');
@@ -24,15 +26,15 @@ export function SignupPage() {
     e.preventDefault();
     setError('');
     if (values.password !== values.confirm_password) {
-      setError('Passwords do not match.');
+      setError(t('auth.passwordsDoNotMatch'));
       return;
     }
     if (values.password.length < 8) {
-      setError('Password must be at least 8 characters.');
+      setError(t('auth.passwordTooShort'));
       return;
     }
     if (!agree) {
-      setError('You must agree to the terms of use and privacy notice.');
+      setError(t('auth.mustAgreeToTerms'));
       return;
     }
     setSubmitting(true);
@@ -41,7 +43,7 @@ export function SignupPage() {
       setSession(res);
       navigate('/face-enrollment');
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Something went wrong. Try again.');
+      setError(err instanceof ApiError ? err.message : t('auth.genericError'));
     } finally {
       setSubmitting(false);
     }
@@ -49,20 +51,20 @@ export function SignupPage() {
 
   return (
     <AuthShell
-      title="Create your account"
-      description="You will enrol your face on the next step. It is used only to confirm it is you at sign-in."
-      footer={<>Already registered? <Link to="/login">Log in</Link></>}
+      title={t('auth.signupTitle')}
+      description={t('auth.signupDescription')}
+      footer={<>{t('auth.alreadyRegistered')} <Link to="/login">{t('auth.loginSubmit')}</Link></>}
     >
       <form onSubmit={submit} style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-4)' }}>
-        {error && <Alert tone="danger" title="Could not create your account">{error}</Alert>}
-        <TextField label="Full name" required placeholder="As shown on your tax ID" value={values.full_name} onChange={update('full_name')} />
-        <TextField label="Email address" type="email" required value={values.email} onChange={update('email')} hint="Used for security notices and account recovery" />
-        <TextField label="Username" required value={values.username} onChange={update('username')} hint="Letters, numbers, dots, underscores and hyphens only" />
-        <TextField label="Password" type="password" revealable required value={values.password} onChange={update('password')} hint="At least 8 characters" />
-        <TextField label="Confirm password" type="password" revealable required value={values.confirm_password} onChange={update('confirm_password')} />
-        <Checkbox checked={agree} onChange={(e) => setAgree(e.target.checked)} label="I agree to the terms of use and the privacy notice." />
+        {error && <Alert tone="danger" title={t('auth.couldNotCreateAccount')}>{error}</Alert>}
+        <TextField label={t('auth.fullNameLabel')} required placeholder={t('auth.fullNamePlaceholder')} value={values.full_name} onChange={update('full_name')} />
+        <TextField label={t('auth.emailLabel')} type="email" required value={values.email} onChange={update('email')} hint={t('auth.emailHint')} />
+        <TextField label={t('auth.usernameFieldLabel')} required value={values.username} onChange={update('username')} hint={t('auth.usernameHint')} />
+        <TextField label={t('auth.passwordLabel')} type="password" revealable required value={values.password} onChange={update('password')} hint={t('auth.passwordHint')} />
+        <TextField label={t('auth.confirmPasswordLabel')} type="password" revealable required value={values.confirm_password} onChange={update('confirm_password')} />
+        <Checkbox checked={agree} onChange={(e) => setAgree(e.target.checked)} label={t('auth.agreeToTerms')} />
         <Button type="submit" size="lg" fullWidth disabled={submitting}>
-          {submitting ? 'Creating account…' : 'Create account and continue'}
+          {submitting ? t('auth.signupSubmitting') : t('auth.signupSubmit')}
         </Button>
       </form>
     </AuthShell>

@@ -31,7 +31,7 @@ from app.chat.config import (
     STT_TRANSCRIBE_PROVIDER,
     TTS_PROVIDER_ORDER,
 )
-from app.chat.db.connection import ensure_ready as ensure_demo_db_ready
+from app.chat.db.seed import ensure_ready as ensure_tax_data_ready
 from app.chat.routes import router as chat_router
 from app.config import ALLOWED_ORIGINS
 from app.database.db import init_db
@@ -61,7 +61,7 @@ def _key_status(name: str, value: str) -> str:
 @app.on_event("startup")
 def on_startup():
     init_db()
-    ensure_demo_db_ready()
+    ensure_tax_data_ready()
 
     logger.info(
         "[STARTUP] API keys: %s",

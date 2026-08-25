@@ -2,6 +2,7 @@ import React from 'react';
 import { useNavigate } from 'react-router-dom';
 import { ApiError, api } from '../api/client.js';
 import { useAuth } from '../auth/AuthContext.jsx';
+import { useLanguage } from '../i18n/LanguageContext.jsx';
 import { AppHeader } from '../components/navigation/AppHeader.jsx';
 import { ChatComposer } from '../components/chat/ChatComposer.jsx';
 import { ChatMessage } from '../components/chat/ChatMessage.jsx';
@@ -13,9 +14,6 @@ import { IconButton } from '../components/core/IconButton.jsx';
 import { useVoiceRecorder } from '../hooks/useVoiceRecorder.js';
 import { LOGO_SRC } from '../constants.js';
 
-const WELCOME =
-  'Welcome. Ask about tax records you are authorized to access, or ask for a fraud-risk assessment on a taxpayer or business.';
-
 const VOICE_REPLIES_KEY = 'etax_voice_replies';
 
 function nowLabel() {
@@ -25,8 +23,15 @@ function nowLabel() {
 export function ChatPage() {
   const { auth, signOut } = useAuth();
   const navigate = useNavigate();
+  // UI-chrome-only localization (this hook) — the conversation itself
+  // (turns below) is never re-translated when the UI language changes: the
+  // welcome bubble is written once, at mount, in whatever language was
+  // active then, and every other turn is either the user's own words or the
+  // backend's own per-turn response-language choice. Toggling the UI
+  // language later must not rewrite any of that. See i18n/LanguageContext.jsx.
+  const { t } = useLanguage();
   const [sessionValid, setSessionValid] = React.useState(true);
-  const [turns, setTurns] = React.useState([{ role: 'assistant', body: WELCOME, time: '' }]);
+  const [turns, setTurns] = React.useState(() => [{ role: 'assistant', body: t('chat.welcome'), time: '' }]);
   const [pendingForm, setPendingForm] = React.useState(null); // {threadId, fields, errors, schemaInfo}
   const [busy, setBusy] = React.useState(false);
   const [error, setError] = React.useState('');
@@ -71,6 +76,24 @@ export function ChatPage() {
     navigate('/', { replace: true });
   };
 
+  // A session can now expire mid-chat (sliding inactivity timeout — see
+  // app.auth.dependencies.require_stage), not just at the initial /auth/me
+  // check on mount. Any 401 from any backend call means the same thing: the
+  // session is gone, so sign out and send them back to login rather than
+  // just showing "Session expired" as an inert chat error bubble.
+  const handleApiError = (err, fallbackMessage) => {
+    if (err instanceof ApiError) {
+      if (err.status === 401) {
+        signOut();
+        navigate('/login', { replace: true });
+        return;
+      }
+      setError(err.message);
+      return;
+    }
+    setError(fallbackMessage);
+  };
+
   const pushAssistantTurn = (response) => {
     setTurns((prev) =>
       prev.concat({
@@ -99,7 +122,7 @@ export function ChatPage() {
       audio.onended = () => URL.revokeObjectURL(url);
       await audio.play();
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Could not play the voice reply.');
+      handleApiError(err, t('chat.couldNotPlayVoice'));
     }
   };
 
@@ -125,7 +148,7 @@ export function ChatPage() {
       const response = await api.sendChatMessage(auth.token, text);
       applyResponse(response);
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Something went wrong. Try again.');
+      handleApiError(err, t('chat.genericError'));
     } finally {
       setBusy(false);
     }
@@ -139,7 +162,28 @@ export function ChatPage() {
       const response = await api.resumeChatForm(auth.token, pendingForm.threadId, values);
       applyResponse(response);
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Something went wrong. Try again.');
+      handleApiError(err, t('chat.genericError'));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  // While the fraud form is showing, typed/spoken chat text is extracted
+  // and merged into the form instead of being treated as a new question —
+  // the form isn't submitted until the user explicitly runs the assessment.
+  const extractIntoForm = async (text) => {
+    if (!pendingForm) return;
+    setError('');
+    setTurns((prev) => prev.concat({ role: 'user', body: text, time: nowLabel() }));
+    setBusy(true);
+    try {
+      const { fields, errors } = await api.extractFraudFields(auth.token, text, pendingForm.fields);
+      setPendingForm((pf) => (pf ? { ...pf, fields, errors } : pf));
+      setTurns((prev) =>
+        prev.concat({ role: 'assistant', body: t('chat.updatedForm'), time: nowLabel() }),
+      );
+    } catch (err) {
+      handleApiError(err, t('chat.couldNotReadDetails'));
     } finally {
       setBusy(false);
     }
@@ -158,10 +202,10 @@ export function ChatPage() {
         if (text && text.trim()) {
           setComposerText((prev) => (prev ? `${prev} ${text.trim()}` : text.trim()));
         } else {
-          setError('Did not catch that — try again or type your message.');
+          setError(t('chat.didNotCatchThat'));
         }
       } catch (err) {
-        setError(err instanceof ApiError ? err.message : 'Could not transcribe your voice message.');
+        handleApiError(err, t('chat.couldNotTranscribe'));
       } finally {
         setTranscribing(false);
       }
@@ -174,12 +218,12 @@ export function ChatPage() {
 
   const listening = voiceRecorder.status === 'recording';
   const composerHint = pendingForm
-    ? 'Complete the form above to continue.'
+    ? t('chat.hintPendingForm')
     : transcribing
-      ? 'Transcribing your voice…'
+      ? t('chat.hintTranscribing')
       : listening
-        ? 'Listening — click the mic again to stop.'
-        : 'Answers cover records you are authorized to access. Every retrieval is logged against your session.';
+        ? t('chat.hintListening')
+        : t('chat.hintDefault');
 
   return (
     <div style={{ height: '100vh', display: 'flex', flexDirection: 'column', background: 'var(--surface-page)' }}>
@@ -191,11 +235,11 @@ export function ChatPage() {
         nav={
           <span style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-4)' }}>
             <span style={{ fontSize: 'var(--text-body-sm)', borderBottom: '2px solid var(--etax-red)', paddingBottom: 2, color: 'var(--text-strong)', fontWeight: 'var(--fw-semibold)' }}>
-              Assistant
+              {t('nav.assistant')}
             </span>
             <IconButton
               icon="volume-2"
-              label={voiceRepliesEnabled ? 'Voice replies on — click to switch to text-only' : 'Voice replies off — click to hear replies spoken aloud'}
+              label={voiceRepliesEnabled ? t('chat.voiceRepliesOn') : t('chat.voiceRepliesOff')}
               tone="ghost"
               size="sm"
               active={voiceRepliesEnabled}
@@ -206,11 +250,11 @@ export function ChatPage() {
       />
       <div ref={scroller} style={{ flex: 1, overflowY: 'auto', padding: 'var(--space-6) var(--space-8) var(--space-8)' }}>
         <div style={{ maxWidth: 820, margin: '0 auto', display: 'flex', flexDirection: 'column', gap: 'var(--space-6)' }}>
-          {turns.map((t, i) => (
-            <ChatMessage key={i} role={t.role} time={t.time}>
+          {turns.map((turn, i) => (
+            <ChatMessage key={i} role={turn.role} time={turn.time}>
               <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-3)' }}>
-                {t.body}
-                {t.table && <DataTable columns={t.table.columns} rows={t.table.rows} />}
+                {turn.body}
+                {turn.table && <DataTable columns={turn.table.columns} rows={turn.table.rows} />}
               </div>
             </ChatMessage>
           ))}
@@ -229,21 +273,21 @@ export function ChatPage() {
 
           {busy && !pendingForm && (
             <div style={{ display: 'flex', gap: 'var(--space-3)', alignItems: 'center', paddingLeft: 44 }}>
-              <Spinner label="Thinking…" />
+              <Spinner label={t('chat.thinking')} />
             </div>
           )}
         </div>
       </div>
       <div style={{ borderTop: '1px solid var(--border-subtle)', background: 'var(--white)', padding: 'var(--space-4) var(--space-8) var(--space-6)' }}>
         <div style={{ maxWidth: 820, margin: '0 auto', display: 'flex', flexDirection: 'column', gap: 'var(--space-3)' }}>
-          {error && <Alert tone="danger" title="Something went wrong">{error}</Alert>}
+          {error && <Alert tone="danger" title={t('chat.errorTitle')}>{error}</Alert>}
           <ChatComposer
             value={composerText}
             onChange={setComposerText}
-            onSend={ask}
+            onSend={pendingForm ? extractIntoForm : ask}
             onMicToggle={handleMicToggle}
             listening={listening}
-            disabled={busy || !!pendingForm || transcribing}
+            disabled={busy || transcribing}
             hint={composerHint}
           />
         </div>

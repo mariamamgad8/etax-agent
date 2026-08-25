@@ -27,7 +27,20 @@ services:
         condition: service_healthy
     environment:
       DATABASE_URL: postgresql+psycopg2://${POSTGRES_USER:-etax}:${POSTGRES_PASSWORD:-etax_pw}@db:5432/${POSTGRES_DB:-etax}
+      # Unprivileged role app/chat/services/sql_runner.py executes user/LLM
+      # SQL as — never the table-owning role above. Change APP_AGENT_DB_PASSWORD
+      # for any real deployment; the default here is dev-only.
+      APP_AGENT_DB_USER: ${APP_AGENT_DB_USER:-app_agent}
+      APP_AGENT_DB_PASSWORD: ${APP_AGENT_DB_PASSWORD:-app_agent_pw}
+      APP_AGENT_DATABASE_URL: postgresql+psycopg2://${APP_AGENT_DB_USER:-app_agent}:${APP_AGENT_DB_PASSWORD:-app_agent_pw}@db:5432/${POSTGRES_DB:-etax}
       JWT_SECRET_KEY: ${JWT_SECRET_KEY:-dev-secret-change-me}
+      # Sliding session: SESSION_INACTIVITY_TIMEOUT_MINUTES is the real
+      # enforcement (expires this many minutes after the last request, not a
+      # fixed duration from login); SESSION_TOKEN_TTL_MINUTES is just the
+      # outer JWT ceiling, well above the inactivity window on purpose. See
+      # backend/app/auth/dependencies.py.
+      SESSION_INACTIVITY_TIMEOUT_MINUTES: ${SESSION_INACTIVITY_TIMEOUT_MINUTES:-60}
+      SESSION_TOKEN_TTL_MINUTES: ${SESSION_TOKEN_TTL_MINUTES:-480}
       ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-http://localhost:5173}
       INSIGHTFACE_MODEL_PACK: buffalo_l
       MATCH_THRESHOLD: "0.45"
@@ -46,22 +59,27 @@ services:
       GROQ_LLM_MODELS: ${GROQ_LLM_MODELS:-openai/gpt-oss-20b,llama-3.1-8b-instant,llama-3.3-70b-versatile,openai/gpt-oss-120b}
       GEMINI_LLM_MODELS: ${GEMINI_LLM_MODELS:-gemini-flash-latest}
       SQL_CHAIN_MODEL: ${SQL_CHAIN_MODEL:-openai/gpt-oss-20b}
-      TTS_PROVIDER_ORDER: ${TTS_PROVIDER_ORDER:-elevenlabs,gemini}
-      ELEVENLABS_MODEL: ${ELEVENLABS_MODEL:-eleven_multilingual_v2}
-      ELEVENLABS_VOICE_ID: ${ELEVENLABS_VOICE_ID:-}
+      TTS_PROVIDER_ORDER: ${TTS_PROVIDER_ORDER:-gemini,piper,edge_tts,elevenlabs}
+      GEMINI_TTS_API_KEYS: ${GEMINI_TTS_API_KEYS:-}
       GEMINI_TTS_MODEL: ${GEMINI_TTS_MODEL:-gemini-2.5-flash-preview-tts}
       GEMINI_TTS_VOICE: ${GEMINI_TTS_VOICE:-Kore}
+      PIPER_VOICE_DIR: ${PIPER_VOICE_DIR:-/workspace/piper_voices}
+      PIPER_VOICE_EN: ${PIPER_VOICE_EN:-en_US-lessac-medium}
+      PIPER_VOICE_AR: ${PIPER_VOICE_AR:-ar_JO-kareem-medium}
+      EDGE_TTS_VOICE_EN: ${EDGE_TTS_VOICE_EN:-en-US-AriaNeural}
+      EDGE_TTS_VOICE_AR: ${EDGE_TTS_VOICE_AR:-ar-EG-SalmaNeural}
+      ELEVENLABS_MODEL: ${ELEVENLABS_MODEL:-eleven_multilingual_v2}
+      ELEVENLABS_VOICE_ID: ${ELEVENLABS_VOICE_ID:-}
       MODEL_COOLDOWN_SECONDS: ${MODEL_COOLDOWN_SECONDS:-60}
-      DEMO_DB_PATH: ${DEMO_DB_PATH:-/workspace/data/demo_tax.db}
     ports:
       - "8000:8000"
     volumes:
       # Caches the auto-downloaded insightface model pack across restarts.
       - insightface_models:/root/.insightface
-      # Synthetic demo tax DB (SQLite) — separate from the real Postgres auth DB.
-      - demo_tax_db:/workspace/data
       # Dev-only live-reload mount — remove for a production deployment.
       - ./backend/app:/workspace/app
+      - ./backend/tests:/workspace/tests
+      - ./backend/pytest.ini:/workspace/pytest.ini
 
   frontend:
     build: ./frontend
@@ -92,4 +110,3 @@ services:
 volumes:
   pgdata:
   insightface_models:
-  demo_tax_db:

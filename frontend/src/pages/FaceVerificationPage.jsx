@@ -2,6 +2,7 @@ import React from 'react';
 import { useNavigate } from 'react-router-dom';
 import { ApiError, api } from '../api/client.js';
 import { useAuth } from '../auth/AuthContext.jsx';
+import { useLanguage } from '../i18n/LanguageContext.jsx';
 import { Badge } from '../components/core/Badge.jsx';
 import { Button } from '../components/core/Button.jsx';
 import { Icon } from '../components/core/Icon.jsx';
@@ -9,29 +10,35 @@ import { Logo } from '../components/core/Logo.jsx';
 import { LiveCameraFrame } from '../components/face/LiveCameraFrame.jsx';
 import { Alert } from '../components/feedback/Alert.jsx';
 import { StatusSteps } from '../components/feedback/StatusSteps.jsx';
+import { LanguageSwitcher } from '../components/navigation/LanguageSwitcher.jsx';
 import { LOGO_SRC } from '../constants.js';
 import { useCamera } from '../hooks/useCamera.js';
 
-const STEPS = ['Camera ready', 'Face detected', 'Liveness check', 'Identity verified'];
-
-function errorMessage(err) {
-  if (!(err instanceof ApiError)) return 'Verification failed. Try again.';
-  if (err.status === 422) return 'No face detected. Position your face inside the frame and try again.';
-  if (err.status === 403) return 'Liveness check failed. This looks like a photo, screen, or other spoof rather than a live face.';
-  if (err.status === 401) return 'Face does not match this account.';
-  if (err.status === 409) return 'No enrolled face found for this account.';
-  return err.message || 'Verification failed. Try again.';
+function useErrorMessage() {
+  const { t } = useLanguage();
+  return (err) => {
+    if (!(err instanceof ApiError)) return t('face.errorVerifyFailed');
+    if (err.status === 422) return t('face.errorNoFaceDetected');
+    if (err.status === 403) return t('face.errorVerifyLivenessFailed');
+    if (err.status === 401) return t('face.errorFaceMismatch');
+    if (err.status === 409) return t('face.errorNoEnrolledFace');
+    return err.message || t('face.errorVerifyFailed');
+  };
 }
 
 export function FaceVerificationPage() {
   const navigate = useNavigate();
   const { auth, setSession, signOut } = useAuth();
+  const { t } = useLanguage();
+  const errorMessage = useErrorMessage();
   const { videoRef, status: cameraStatus, start, captureFrame } = useCamera();
   const [stepIndex, setStepIndex] = React.useState(0);
   const [submitting, setSubmitting] = React.useState(false);
   const [failure, setFailure] = React.useState('');
   const [done, setDone] = React.useState(false);
   const pacingTimer = React.useRef(null);
+
+  const STEPS = [t('face.stepCameraReady'), t('face.stepFaceDetected'), t('face.stepLivenessCheck'), t('face.stepIdentityVerified')];
 
   React.useEffect(() => {
     start();
@@ -45,7 +52,7 @@ export function FaceVerificationPage() {
     pacingTimer.current = setTimeout(() => setStepIndex(2), 700);
     try {
       const blob = await captureFrame();
-      if (!blob) throw new ApiError('Camera is not ready yet.', 0);
+      if (!blob) throw new ApiError(t('face.cameraNotReady'), 0);
       const res = await api.verifyFace(auth.token, blob);
       clearTimeout(pacingTimer.current);
       setStepIndex(4);
@@ -69,48 +76,51 @@ export function FaceVerificationPage() {
   return (
     <div style={{ minHeight: '100vh', background: 'var(--surface-page)', display: 'flex', flexDirection: 'column' }}>
       <header style={{ display: 'flex', alignItems: 'center', height: 72, padding: '0 var(--space-8)', background: 'var(--white)', borderBottom: '1px solid var(--border-subtle)' }}>
-        <Logo height={30} src={LOGO_SRC} subtitle="Identity check" />
-        <Badge tone="navy" style={{ marginLeft: 'auto' }}>Step 2 of 2</Badge>
+        <Logo height={30} src={LOGO_SRC} subtitle={t('face.verifyTagline')} />
+        <div style={{ marginInlineStart: 'auto', display: 'flex', alignItems: 'center', gap: 'var(--space-4)' }}>
+          <LanguageSwitcher />
+          <Badge tone="navy">{t('face.verifyStepBadge')}</Badge>
+        </div>
       </header>
       <main style={{ flex: 1, display: 'flex', justifyContent: 'center', padding: 'var(--space-10) var(--space-4)' }}>
         <div style={{ width: '100%', maxWidth: 860 }}>
-          <h1 style={{ fontSize: 'var(--text-h1)', marginBottom: 'var(--space-2)' }}>Verify your identity</h1>
+          <h1 style={{ fontSize: 'var(--text-h1)', marginBottom: 'var(--space-2)' }}>{t('face.verifyHeading')}</h1>
           <p style={{ fontSize: 'var(--text-body-md)', color: 'var(--text-body)', marginBottom: 'var(--space-6)' }}>
-            {auth.user ? `${auth.user.full_name}, ` : ''}look straight at the camera in even lighting. Nothing is recorded — the check runs and is discarded.
+            {auth.user ? `${auth.user.full_name}, ` : ''}{t('face.verifyBody')}
           </p>
           <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0,1.4fr) minmax(0,1fr)', gap: 'var(--space-6)', background: 'var(--white)', border: '1px solid var(--border-subtle)', borderRadius: 'var(--radius-md)', boxShadow: 'var(--shadow-sm)', padding: 'var(--space-6)' }}>
             <LiveCameraFrame videoRef={videoRef} stage={done ? 'verified' : 'active'} failed={!!failure} cameraStatus={cameraStatus} />
             <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-5)' }}>
               <div>
-                <p className="etax-overline" style={{ marginBottom: 'var(--space-3)' }}>Security check</p>
+                <p className="etax-overline" style={{ marginBottom: 'var(--space-3)' }}>{t('face.securityCheck')}</p>
                 <StatusSteps steps={STEPS} current={stepIndex} failed={!!failure} />
               </div>
               {failure ? (
-                <Alert tone="danger" title="Verification failed">{failure}</Alert>
+                <Alert tone="danger" title={t('face.verifyFailedTitle')}>{failure}</Alert>
               ) : done ? (
-                <Alert tone="success" title="Identity verified">Opening your assistant.</Alert>
+                <Alert tone="success" title={t('face.verifiedTitle')}>{t('face.openingAssistant')}</Alert>
               ) : cameraStatus === 'denied' ? (
-                <Alert tone="danger" title="Camera permission denied">Allow camera access in your browser to continue.</Alert>
+                <Alert tone="danger" title={t('face.cameraDenied')}>{t('face.cameraDeniedBody')}</Alert>
               ) : (
                 <div style={{ display: 'flex', gap: 'var(--space-3)', alignItems: 'flex-start', padding: 'var(--space-4)', background: 'var(--gray-50)', border: '1px solid var(--border-subtle)', borderRadius: 'var(--radius-sm)' }}>
                   <Icon name="scan-face" size={18} color="var(--etax-navy)" style={{ marginTop: 1 }} />
                   <p style={{ fontSize: 'var(--text-body-sm)', color: 'var(--gray-800)' }}>
-                    {cameraStatus === 'ready' ? 'Position your face inside the frame, then verify.' : 'Starting camera…'}
+                    {cameraStatus === 'ready' ? t('face.positionFaceVerify') : t('face.startingCamera')}
                   </p>
                 </div>
               )}
               <div style={{ marginTop: 'auto', display: 'flex', flexDirection: 'column', gap: 'var(--space-3)' }}>
                 {!done && (
                   <Button fullWidth disabled={cameraStatus !== 'ready' || submitting} onClick={verify}>
-                    {submitting ? 'Verifying…' : failure ? 'Try again' : 'Verify my identity'}
+                    {submitting ? t('face.verifying') : failure ? t('common.tryAgain') : t('face.verifyAction')}
                   </Button>
                 )}
-                <Button variant="ghost" fullWidth onClick={cancel}>Cancel and return to login</Button>
+                <Button variant="ghost" fullWidth onClick={cancel}>{t('face.cancelAndReturn')}</Button>
               </div>
             </div>
           </div>
           <p style={{ fontSize: 'var(--text-caption)', color: 'var(--text-muted)', marginTop: 'var(--space-4)', display: 'flex', gap: 'var(--space-2)', alignItems: 'center' }}>
-            <Icon name="lock" size={13} /> Face data stays on the verification service and is never shown to other users.
+            <Icon name="lock" size={13} /> {t('face.privacyFootnote')}
           </p>
         </div>
       </main>

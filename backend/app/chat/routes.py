@@ -6,10 +6,13 @@ from fastapi.concurrency import run_in_threadpool
 from pydantic import BaseModel, Field
 
 from app.auth.dependencies import require_authenticated
+from app.chat.fraud.extraction import extract_fraud_features
+from app.chat.fraud.validation import validate_fraud_features
 from app.chat.graph import resume_chat, run_chat
 from app.chat.providers.base import AllProvidersExhausted
 from app.chat.providers.stt import transcribe_audio
 from app.chat.providers.tts import synthesize_speech
+from app.chat.responses import detect_response_language
 from app.database.models import User
 
 logger = logging.getLogger(__name__)
@@ -56,6 +59,16 @@ class SpeakRequest(BaseModel):
     text: str = Field(min_length=1, max_length=2000)
 
 
+class FraudExtractRequest(BaseModel):
+    text: str = Field(min_length=1, max_length=4000)
+    current_fields: dict = Field(default_factory=dict)
+
+
+class FraudExtractResponse(BaseModel):
+    fields: dict
+    errors: list[str]
+
+
 def _own_thread_id(user: User) -> str:
     return f"{user.id}:{uuid.uuid4().hex}"
 
@@ -82,7 +95,7 @@ async def send_message(
             raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "message is required to start a conversation.")
         thread_id = payload.thread_id or _own_thread_id(user)
         _check_thread_ownership(user, thread_id)
-        state, interrupt_payload = await run_in_threadpool(run_chat, payload.message, thread_id)
+        state, interrupt_payload = await run_in_threadpool(run_chat, payload.message, thread_id, str(user.id))
 
     if interrupt_payload is not None:
         return ChatMessageResponse(
@@ -103,6 +116,34 @@ async def send_message(
         intent=state.get("intent"),
         table=TablePayload(**table_payload) if table_payload else None,
     )
+
+
+@router.post("/fraud/extract", response_model=FraudExtractResponse)
+async def fraud_extract(
+    payload: FraudExtractRequest,
+    user: User = Depends(require_authenticated),
+):
+    """
+    Lets the user type/paste more feature text into the chat while the fraud
+    form is showing, without submitting it yet — extracts values from the
+    text and merges them into the form's current values (a field the new
+    text doesn't mention keeps whatever value it already had; never
+    overwritten with null), so it "reflects in the menu" immediately. This
+    is intentionally stateless (no thread_id, doesn't touch the graph's
+    interrupt/resume checkpoint) — the actual submission still goes through
+    POST /chat/message's form_response path unchanged.
+    """
+    logger.info("[FRAUD] /chat/fraud/extract request from user_id=%s", user.id)
+    # This endpoint is stateless (no thread_id/graph state — see the docstring
+    # above), so unlike the graph's nodes it has no state["response_language"]
+    # to read; it detects directly from the text just submitted instead,
+    # using the same deterministic per-message logic route_intent uses.
+    language = detect_response_language(payload.text)
+    extracted = await run_in_threadpool(extract_fraud_features, payload.text)
+    new_values = extracted.model_dump(exclude_none=True)
+    merged = {**payload.current_fields, **new_values}
+    errors = validate_fraud_features(merged, language)
+    return FraudExtractResponse(fields=merged, errors=errors)
 
 
 @router.post("/transcribe", response_model=TranscribeResponse)

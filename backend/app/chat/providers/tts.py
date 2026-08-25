@@ -1,50 +1,93 @@
 """
 Central text-to-speech access point, mirroring llm.py/stt.py's shape: routes
 call synthesize_speech(text) and this module handles provider fallback
-(ElevenLabs -> Gemini by default, TTS_PROVIDER_ORDER) and cooldown.
+(Gemini -> Piper -> edge_tts -> ElevenLabs by default, TTS_PROVIDER_ORDER)
+and cooldown.
 
-Both providers accept plain multilingual text directly — no separate
-language parameter is needed, since ElevenLabs' eleven_multilingual_v2 model
-and Gemini's TTS models both infer the spoken language from the input text
-itself (confirmed live for both English and Arabic against Gemini TTS).
+Gemini is the default/primary provider: it's what actually serves audio
+today (see below), and it accepts plain multilingual text directly — no
+separate language parameter, since its TTS models infer the spoken language
+from the input text itself (confirmed live for both English and Arabic).
+Piper (local/offline ONNX voice models baked into the image at build time —
+see backend/Dockerfile) is the second attempt: no network call, no API key,
+no rate limit, and live comparison found it noticeably better on Arabic
+than edge_tts. edge_tts (Microsoft Edge's free online voices) is third.
+Like edge_tts, Piper's voices are per-language, so _synthesize_piper picks
+PIPER_VOICE_AR/PIPER_VOICE_EN itself via the same deterministic language
+detection the rest of the chatbot already uses
+(app.chat.responses.detect_response_language) rather than a second guess.
 
 NOTE (live-tested, not guessed): the ElevenLabs key configured in this
 project's .env is missing the `voices_read` permission and 402s on any
 stock/library voice — "Free users cannot use library voices via the API.
-Please upgrade your subscription to use this voice." ElevenLabs stays first
-in TTS_PROVIDER_ORDER because that's this project's stated preference, and it
-will start working the moment the account has an eligible voice/plan; Gemini
-is what actually serves audio today, via the fallback below.
+Please upgrade your subscription to use this voice." ElevenLabs is kept
+configurable as a last-resort fallback (not deleted — swap TTS_PROVIDER_ORDER
+to reorder/drop providers without a code change) rather than attempted first,
+since an unnecessary request to an account known to reject it just wastes a
+round trip ahead of a provider that actually works.
 
 Gemini's TTS models return raw 16-bit PCM audio (confirmed live: mime type
 "audio/L16;codec=pcm;rate=24000"), not a playable container — _pcm_to_wav
-wraps it in a WAV header before it's returned to the caller.
+wraps it in a WAV header before it's returned to the caller. Piper's own
+AudioChunk objects carry their own sample rate (confirmed live: 22050 Hz for
+both voices used here, not necessarily the same as Gemini's), so
+_synthesize_piper passes that through explicitly rather than assuming 24000.
+
+Fallback latency: the google-genai SDK retries a failing request itself, by
+default, up to 5 attempts with exponential backoff (1s, 2s, 4s, 8s...) on
+429/5xx — confirmed live via HttpRetryOptions' own defaults. Against a
+rate-limited free-tier key (exactly the common case here) that added ~15s of
+pure retry delay INSIDE a single provider attempt before this module's own
+fallback loop ever got a chance to move on. Each Gemini client below is
+built with retry_options=HttpRetryOptions(attempts=1) (no SDK-level retries
+— this module's provider/key fallback already covers that) and an explicit
+timeout, so a failing key fails fast instead of slow.
 """
+import asyncio
 import io
 import logging
+import time
 import wave
+from pathlib import Path
 
+import edge_tts
 import httpx
 from google import genai
 from google.genai import types as genai_types
+from piper import PiperVoice
 
 from app.chat.config import (
+    EDGE_TTS_VOICE_AR,
+    EDGE_TTS_VOICE_EN,
     ELEVENLABS_API_KEY,
     ELEVENLABS_MODEL,
     ELEVENLABS_VOICE_ID,
-    GEMINI_API_KEY,
+    GEMINI_TTS_API_KEYS,
     GEMINI_TTS_MODEL,
     GEMINI_TTS_VOICE,
     MODEL_COOLDOWN_SECONDS,
+    PIPER_VOICE_AR,
+    PIPER_VOICE_DIR,
+    PIPER_VOICE_EN,
     TTS_PROVIDER_ORDER,
 )
 from app.chat.providers.base import AllProvidersExhausted, CooldownTracker, ProviderError
+from app.chat.responses import detect_response_language
 
 logger = logging.getLogger(__name__)
 
 _cooldown = CooldownTracker(MODEL_COOLDOWN_SECONDS)
 
-_gemini_client = genai.Client(api_key=GEMINI_API_KEY) if GEMINI_API_KEY else None
+# No SDK-level retries (see module docstring) and a tight timeout, so a
+# rate-limited/unresponsive key fails in ~10s, not ~15s of backoff on top of
+# however long the request itself takes.
+_GEMINI_HTTP_OPTIONS = genai_types.HttpOptions(
+    timeout=10_000,  # milliseconds
+    retry_options=genai_types.HttpRetryOptions(attempts=1),
+)
+_gemini_clients = [
+    genai.Client(api_key=key, http_options=_GEMINI_HTTP_OPTIONS) for key in GEMINI_TTS_API_KEYS
+]
 
 # ElevenLabs' public "Rachel" voice — used only if ELEVENLABS_VOICE_ID isn't
 # set; a library voice still requires a paid plan per the module docstring.
@@ -59,14 +102,14 @@ def _synthesize_elevenlabs(text: str) -> tuple[bytes, str]:
         f"https://api.elevenlabs.io/v1/text-to-speech/{voice_id}",
         headers={"xi-api-key": ELEVENLABS_API_KEY, "Content-Type": "application/json"},
         json={"text": text, "model_id": ELEVENLABS_MODEL},
-        timeout=30,
+        timeout=10,
     )
     if response.status_code != 200:
         raise ProviderError(f"ElevenLabs TTS failed ({response.status_code}): {response.text[:300]}")
     return response.content, "audio/mpeg"
 
 
-def _pcm_to_wav(pcm_bytes: bytes, sample_rate: int = 24000, channels: int = 1, sample_width: int = 2) -> bytes:
+def _pcm_to_wav(pcm_bytes: bytes, sample_rate: int, channels: int = 1, sample_width: int = 2) -> bytes:
     buf = io.BytesIO()
     with wave.open(buf, "wb") as wav_file:
         wav_file.setnchannels(channels)
@@ -77,8 +120,8 @@ def _pcm_to_wav(pcm_bytes: bytes, sample_rate: int = 24000, channels: int = 1, s
 
 
 def _synthesize_gemini(text: str) -> tuple[bytes, str]:
-    if _gemini_client is None:
-        raise ProviderError("GEMINI_API_KEY is not configured.")
+    if not _gemini_clients:
+        raise ProviderError("No Gemini API key is configured for TTS (GEMINI_TTS_API_KEYS/GEMINI_API_KEY).")
     # Short/imperative-sounding input (e.g. "Testing the new voice.", "Ok.")
     # is sometimes read by the model as an instruction to follow rather than
     # content to speak, and it replies conversationally instead of returning
@@ -86,27 +129,82 @@ def _synthesize_gemini(text: str) -> tuple[bytes, str]:
     # for TTS") — confirmed live and deterministic per input. Framing the
     # text as something to read aloud fixes it; confirmed live across short
     # text, questions, and Arabic.
-    response = _gemini_client.models.generate_content(
-        model=GEMINI_TTS_MODEL,
-        contents=f"Read this aloud, with no commentary: {text}",
-        config=genai_types.GenerateContentConfig(
-            response_modalities=["AUDIO"],
-            speech_config=genai_types.SpeechConfig(
-                voice_config=genai_types.VoiceConfig(
-                    prebuilt_voice_config=genai_types.PrebuiltVoiceConfig(voice_name=GEMINI_TTS_VOICE)
-                )
-            ),
+    prompt = f"Read this aloud, with no commentary: {text}"
+    config = genai_types.GenerateContentConfig(
+        response_modalities=["AUDIO"],
+        speech_config=genai_types.SpeechConfig(
+            voice_config=genai_types.VoiceConfig(
+                prebuilt_voice_config=genai_types.PrebuiltVoiceConfig(voice_name=GEMINI_TTS_VOICE)
+            )
         ),
     )
-    candidates = response.candidates or []
-    parts = candidates[0].content.parts if candidates and candidates[0].content else []
-    inline_data = parts[0].inline_data if parts else None
-    if inline_data is None or not inline_data.data:
-        raise ProviderError("Gemini TTS returned no audio data.")
-    return _pcm_to_wav(inline_data.data), "audio/wav"
+
+    last_exc: Exception | None = None
+    for i, client in enumerate(_gemini_clients):
+        try:
+            response = client.models.generate_content(model=GEMINI_TTS_MODEL, contents=prompt, config=config)
+            candidates = response.candidates or []
+            parts = candidates[0].content.parts if candidates and candidates[0].content else []
+            inline_data = parts[0].inline_data if parts else None
+            if inline_data is None or not inline_data.data:
+                raise ProviderError("Gemini TTS returned no audio data.")
+            return _pcm_to_wav(inline_data.data, sample_rate=24000), "audio/wav"
+        except Exception as exc:  # noqa: BLE001 - try the next key before giving up on Gemini entirely
+            logger.warning("[TTS] gemini key #%d/%d failed: %s", i + 1, len(_gemini_clients), exc)
+            last_exc = exc
+    raise ProviderError(f"All {len(_gemini_clients)} configured Gemini TTS key(s) failed. Last error: {last_exc}")
 
 
-_PROVIDERS = {"elevenlabs": _synthesize_elevenlabs, "gemini": _synthesize_gemini}
+# Loaded once per language and reused — PiperVoice.load() reads the ONNX
+# model from disk, which is slow to repeat on every call.
+_piper_voices: dict[str, PiperVoice] = {}
+
+
+def _load_piper_voice(name: str) -> PiperVoice:
+    if name not in _piper_voices:
+        model_path = Path(PIPER_VOICE_DIR) / f"{name}.onnx"
+        if not model_path.exists():
+            raise ProviderError(f"Piper voice model not found: {model_path}")
+        _piper_voices[name] = PiperVoice.load(str(model_path))
+    return _piper_voices[name]
+
+
+def _synthesize_piper(text: str) -> tuple[bytes, str]:
+    voice_name = PIPER_VOICE_AR if detect_response_language(text) == "ar" else PIPER_VOICE_EN
+    voice = _load_piper_voice(voice_name)
+    chunks = list(voice.synthesize(text))
+    if not chunks:
+        raise ProviderError("Piper returned no audio data.")
+    pcm_bytes = b"".join(c.audio_int16_bytes for c in chunks)
+    return _pcm_to_wav(pcm_bytes, sample_rate=chunks[0].sample_rate, channels=chunks[0].sample_channels), "audio/wav"
+
+
+async def _edge_tts_stream(text: str, voice: str) -> bytes:
+    communicate = edge_tts.Communicate(text, voice)
+    chunks = bytearray()
+    async for chunk in communicate.stream():
+        if chunk["type"] == "audio":
+            chunks.extend(chunk["data"])
+    return bytes(chunks)
+
+
+def _synthesize_edge_tts(text: str) -> tuple[bytes, str]:
+    # edge_tts has no single multilingual voice like Gemini/ElevenLabs — its
+    # voices are per-language, so the same deterministic detector the rest of
+    # the chatbot uses picks the matching one here rather than guessing again.
+    voice = EDGE_TTS_VOICE_AR if detect_response_language(text) == "ar" else EDGE_TTS_VOICE_EN
+    audio_bytes = asyncio.run(_edge_tts_stream(text, voice))
+    if not audio_bytes:
+        raise ProviderError("edge_tts returned no audio data.")
+    return audio_bytes, "audio/mpeg"
+
+
+_PROVIDERS = {
+    "gemini": _synthesize_gemini,
+    "piper": _synthesize_piper,
+    "edge_tts": _synthesize_edge_tts,
+    "elevenlabs": _synthesize_elevenlabs,
+}
 
 
 def synthesize_speech(text: str) -> tuple[bytes, str]:
@@ -120,12 +218,18 @@ def synthesize_speech(text: str) -> tuple[bytes, str]:
         if _cooldown.is_cooling_down(provider):
             logger.info("[TTS] skipping %s (cooling down after a recent failure)", provider)
             continue
+        started = time.perf_counter()
         try:
             audio_bytes, mime_type = fn(text)
-            logger.info("[TTS] synthesized %d chars -> %d bytes via %s", len(text), len(audio_bytes), provider)
+            latency_ms = (time.perf_counter() - started) * 1000
+            logger.info(
+                "[TTS] synthesized %d chars -> %d bytes via %s in %.0fms",
+                len(text), len(audio_bytes), provider, latency_ms,
+            )
             return audio_bytes, mime_type
         except Exception as exc:  # noqa: BLE001 - any provider failure just moves to the next candidate
-            logger.warning("[TTS] call failed on %s: %s", provider, exc)
+            latency_ms = (time.perf_counter() - started) * 1000
+            logger.warning("[TTS] call failed on %s after %.0fms: %s", provider, latency_ms, exc)
             _cooldown.mark(provider)
             last_error = exc
     raise AllProvidersExhausted(f"Every configured TTS provider failed. Last error: {last_error}")

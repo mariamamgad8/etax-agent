@@ -12,7 +12,22 @@ export function useCamera() {
   const [status, setStatus] = React.useState('idle'); // idle | starting | ready | denied | error
   const [error, setError] = React.useState('');
 
+  const stop = React.useCallback(() => {
+    if (streamRef.current) {
+      streamRef.current.getTracks().forEach((t) => t.stop());
+      streamRef.current = null;
+    }
+  }, []);
+
   const start = React.useCallback(async () => {
+    // React 18 StrictMode double-invokes this effect once in dev (mount ->
+    // cleanup -> mount) — the cleanup only clears a pacing timer, not the
+    // camera, so without this the first getUserMedia stream from that dry
+    // run was never stopped and stayed on (visible as the camera light
+    // staying lit after leaving the page). Always releasing any stream
+    // already held before requesting a new one fixes that at the source,
+    // regardless of how many times start() gets called.
+    stop();
     setStatus('starting');
     setError('');
     try {
@@ -30,14 +45,7 @@ export function useCamera() {
       setStatus(err && err.name === 'NotAllowedError' ? 'denied' : 'error');
       setError((err && err.message) || 'Could not access the camera.');
     }
-  }, []);
-
-  const stop = React.useCallback(() => {
-    if (streamRef.current) {
-      streamRef.current.getTracks().forEach((t) => t.stop());
-      streamRef.current = null;
-    }
-  }, []);
+  }, [stop]);
 
   const captureFrame = React.useCallback(() => {
     const video = videoRef.current;

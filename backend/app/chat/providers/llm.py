@@ -5,6 +5,7 @@ this module handles provider/model priority, fallback and cooldown behind
 that interface. See LLM_PROVIDER_ORDER / GROQ_LLM_MODELS / GEMINI_LLM_MODELS
 in app.chat.config for the priority configuration.
 """
+
 import json
 import logging
 from typing import TypeVar

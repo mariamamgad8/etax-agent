@@ -1,9 +1,11 @@
 import React from 'react';
+import { useLanguage } from '../../i18n/LanguageContext.jsx';
 import { Icon } from '../core/Icon.jsx';
 import { IconButton } from '../core/IconButton.jsx';
 
 /** One turn in the conversation. Assistant turns are white panels; user turns are navy-tinted blocks. */
 export function ChatMessage({ role = 'assistant', name, time, speakable, playing, onPlay, children, style, ...rest }) {
+  const { t } = useLanguage();
   const isUser = role === 'user';
   return (
     <article {...rest} style={{ display: 'flex', gap: 'var(--space-3)', flexDirection: isUser ? 'row-reverse' : 'row', ...style }}>
@@ -15,7 +17,7 @@ export function ChatMessage({ role = 'assistant', name, time, speakable, playing
       </span>
       <div style={{ maxWidth: 640, display: 'flex', flexDirection: 'column', gap: 'var(--space-2)', alignItems: isUser ? 'flex-end' : 'flex-start' }}>
         <div style={{ display: 'flex', gap: 'var(--space-2)', alignItems: 'baseline' }}>
-          <span style={{ fontSize: 'var(--text-body-sm)', fontWeight: 'var(--fw-semibold)', color: 'var(--text-strong)' }}>{name || (isUser ? 'You' : 'eTax Assistant')}</span>
+          <span style={{ fontSize: 'var(--text-body-sm)', fontWeight: 'var(--fw-semibold)', color: 'var(--text-strong)' }}>{name || (isUser ? t('chat.senderYou') : t('chat.senderAssistant'))}</span>
           {time && <span style={{ fontSize: 'var(--text-caption)', color: 'var(--text-muted)' }} className="etax-mono">{time}</span>}
         </div>
         <div style={{
@@ -27,7 +29,7 @@ export function ChatMessage({ role = 'assistant', name, time, speakable, playing
         </div>
         {speakable && !isUser && (
           <div style={{ display: 'flex', gap: 'var(--space-2)' }}>
-            <IconButton icon={playing ? 'pause' : 'volume-2'} label={playing ? 'Stop playback' : 'Read this answer aloud'} size="sm" tone="ghost" active={playing} onClick={onPlay} />
+            <IconButton icon={playing ? 'pause' : 'volume-2'} label={playing ? t('chat.stopPlayback') : t('chat.readAloud')} size="sm" tone="ghost" active={playing} onClick={onPlay} />
           </div>
         )}
       </div>

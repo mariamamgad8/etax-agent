@@ -2,7 +2,8 @@
 SQLDatabaseChain experiment for the database_query branch — explicitly a
 prototype step per the project roadmap, not the final architecture.
 
-Live-tested against the demo DB across several question shapes and found
+Live-tested (originally against the SQLite demo DB, now repointed at the
+Postgres `tax` schema — see below) across several question shapes and found
 too unreliable to wire into the actual graph: SQLDatabaseChain builds a
 raw-completion-style prompt ("...Question: <q>\\nSQLQuery:") and asks the
 chat model to continue it, which is not what chat-tuned models (like Groq's)
@@ -28,10 +29,25 @@ is a deliberately minimal stand-in for the roadmap's controlled SQL
 subgraph (no repair loop, no schema-inspection step yet) — enough to wire
 the UI end-to-end now, not the final architecture either.
 
-One safety measure applies to both: the SQLAlchemy engine/read connection
-opens the SQLite file in read-only mode, so even a write statement that
-slipped past the SELECT-only check would fail at the OS/DB level rather
-than mutate data.
+One safety measure applies to both: the connection used to execute generated
+SQL is opened with the `postgresql_readonly` execution option (backed by
+psycopg2's `connection.readonly`), so even a write statement that slipped
+past the SELECT-only/keyword checks would be rejected at the database level
+rather than mutate data — this replaces the old SQLite read-only-file-mode
+equivalent now that the demo tax data lives in Postgres's `tax` schema
+instead of a separate SQLite file.
+
+*** NOT OWNERSHIP-AWARE — DO NOT WIRE THIS INTO THE LIVE GRAPH ***
+Neither `ask_database` nor `generate_and_run_sql` in this module know
+anything about which taxpayer/company an authenticated user is allowed to
+see — they execute against the full `tax` schema via the table-owning
+Postgres connection (`app.database.db.engine`), which also bypasses row-level
+security entirely (that role is a superuser). The live `database_query`
+graph node calls `app.chat.services.sql_runner.handle_user_database_query`
+instead, which determines per-company majority/minority access from
+`tax.company_owners`, restricts the LLM to the matching secure view(s), and
+executes via the unprivileged `app_agent` role with RLS enforced. These
+functions stay here only as the documented SQLDatabaseChain experiment.
 """
 import logging
 import re
@@ -40,12 +56,17 @@ from langchain_community.utilities import SQLDatabase
 from langchain_core.prompts import PromptTemplate
 from langchain_experimental.sql import SQLDatabaseChain
 from langchain_groq import ChatGroq
-from sqlalchemy import create_engine
+from sqlalchemy import text
 
-from app.chat.config import DEMO_DB_PATH, GROQ_API_KEY, SQL_CHAIN_MODEL
+from app.chat.config import GROQ_API_KEY, SQL_CHAIN_MODEL
+from app.chat.db.sql_utils import clean_sql
 from app.chat.providers.llm import call_llm_text
+from app.database.db import engine
+from app.database.tax_models import TAX_SCHEMA
 
 logger = logging.getLogger(__name__)
+
+_TAX_TABLES = ["taxpayers", "companies", "company_owners", "transactions", "items"]
 
 # Same as the library's default SQLite prompt, plus one line forbidding
 # markdown fences — SQL_CHAIN_MODEL's default (openai/gpt-oss-20b) respects
@@ -83,8 +104,7 @@ _chain = None
 def _get_db() -> SQLDatabase:
     global _db
     if _db is None:
-        engine = create_engine(f"sqlite:///file:{DEMO_DB_PATH}?mode=ro&uri=true")
-        _db = SQLDatabase(engine, include_tables=["taxpayers", "tax_returns"])
+        _db = SQLDatabase(engine, schema=TAX_SCHEMA, include_tables=_TAX_TABLES)
     return _db
 
 
@@ -142,42 +162,34 @@ def _execute_readonly(sql: str):
     """Re-runs the given SQL ourselves to get clean structured rows for the UI."""
     if not sql.strip().lower().startswith("select"):
         raise ValueError("Only SELECT statements are re-executed for structured results.")
-    from app.chat.db.connection import get_connection
-
-    conn = get_connection()
-    try:
-        cursor = conn.execute(sql)
-        columns = [d[0] for d in cursor.description]
-        rows = [dict(row) for row in cursor.fetchall()]
+    with engine.connect().execution_options(postgresql_readonly=True) as conn:
+        # Lets the LLM write unqualified table names (FROM taxpayers) and
+        # still resolve correctly, rather than depending on it reliably
+        # schema-qualifying every reference on its own.
+        conn.execute(text(f"SET search_path TO {TAX_SCHEMA}, public"))
+        result = conn.execute(text(sql))
+        columns = list(result.keys())
+        rows = [dict(zip(columns, row)) for row in result.fetchall()]
         return columns, rows
-    finally:
-        conn.close()
 
 
-# --- Reliable path actually wired into the graph (see module docstring) ----
+# --- Hand-rolled alternative to the chain above — NOT what the live graph
+# calls (see module docstring); superseded by app.chat.services.sql_runner ---
 
 _FORBIDDEN_SQL_KEYWORDS = re.compile(
-    r"\b(INSERT|UPDATE|DELETE|DROP|ALTER|CREATE|ATTACH|DETACH|PRAGMA|REPLACE|VACUUM)\b",
+    r"\b(INSERT|UPDATE|DELETE|DROP|ALTER|CREATE|ATTACH|DETACH|PRAGMA|REPLACE|VACUUM|TRUNCATE|GRANT|REVOKE|COPY)\b",
     re.IGNORECASE,
 )
 
 
-def _clean_sql(text: str) -> str:
-    """Strips markdown code fences a model may add despite being told not to."""
-    text = text.strip()
-    text = re.sub(r"^```[a-zA-Z]*\n?", "", text)
-    text = re.sub(r"\n?```$", "", text)
-    return text.strip().rstrip(";")
-
-
 def _sql_generation_prompt() -> str:
-    return f"""You write a single SQLite SELECT query to answer a question about this schema:
+    return f"""You write a single PostgreSQL SELECT query to answer a question about this schema (schema name: {TAX_SCHEMA}):
 
 {_get_db().get_table_info()}
 
 Rules:
 - Output ONLY the raw SQL statement — no markdown code fences, no backticks, no explanation, no "SQLQuery:" label.
-- Exactly one SELECT statement. Never write INSERT, UPDATE, DELETE, DROP, ALTER, CREATE, ATTACH, or PRAGMA.
+- Exactly one SELECT statement. Never write INSERT, UPDATE, DELETE, DROP, ALTER, CREATE, TRUNCATE, GRANT, or COPY.
 - Only use the columns and tables shown above. Never invent a column or table name.
 - Add "LIMIT 20" unless the question asks for a count, sum, average, or other single aggregate value.
 """
@@ -197,7 +209,7 @@ def generate_and_run_sql(question_en: str) -> dict:
         logger.warning("[SQL] generation failed: %s", exc)
         return {"sql": None, "columns": None, "rows": None, "error": f"Could not generate a query: {exc}"}
 
-    sql = _clean_sql(raw)
+    sql = clean_sql(raw)
     logger.info("[SQL] generated query: %s", sql)
 
     if not sql.lower().startswith("select"):

@@ -61,19 +61,43 @@ GEMINI_LLM_MODELS = _split_csv("GEMINI_LLM_MODELS", ["gemini-flash-latest"])
 MODEL_COOLDOWN_SECONDS = int(os.getenv("MODEL_COOLDOWN_SECONDS", "60"))
 
 # --- TTS ---
-# Both providers accept plain multilingual text directly with no separate
-# language parameter — ElevenLabs' eleven_multilingual_v2 model and Gemini's
-# TTS models both infer the spoken language from the input text itself
-# (confirmed live for both English and Arabic input against Gemini TTS).
-TTS_PROVIDER_ORDER = _split_csv("TTS_PROVIDER_ORDER", ["elevenlabs", "gemini"])
-ELEVENLABS_MODEL = os.getenv("ELEVENLABS_MODEL", "eleven_multilingual_v2")
-ELEVENLABS_VOICE_ID = os.getenv("ELEVENLABS_VOICE_ID", "")
+# Gemini is the default/primary provider — confirmed live as the one that
+# actually serves audio for this project's accounts (see providers/tts.py's
+# module docstring for the ElevenLabs plan limitation that ruled it out as
+# the first attempt). Piper (local/offline ONNX voice models, no network
+# call, no rate limit) is the second attempt, right after Gemini — live
+# comparison found edge_tts noticeably worse on Arabic, and a local model
+# also can't be network-slow, so it's a fast fallback too. edge_tts is
+# third, ElevenLabs stays configurable as a last resort rather than deleted,
+# per this project's fallback-abstraction convention — swap
+# TTS_PROVIDER_ORDER to reorder/drop providers without code changes.
+TTS_PROVIDER_ORDER = _split_csv("TTS_PROVIDER_ORDER", ["gemini", "piper", "edge_tts", "elevenlabs"])
+
+# Gemini's free TTS quota is small (10 requests/day, confirmed live) and
+# shared across however many keys are configured here — GEMINI_TTS_API_KEYS
+# is a dedicated, separate pool from GEMINI_API_KEY (used for LLM calls) so
+# TTS usage never eats into LLM quota or vice versa. Multiple comma-
+# separated keys let providers/tts.py rotate to the next one when a key is
+# rate-limited/exhausted rather than falling through to Piper immediately —
+# only once every key is exhausted does the provider itself fail. Falls
+# back to the shared GEMINI_API_KEY if no dedicated key is configured.
+GEMINI_TTS_API_KEYS = _split_csv("GEMINI_TTS_API_KEYS", [GEMINI_API_KEY] if GEMINI_API_KEY else [])
 GEMINI_TTS_MODEL = os.getenv("GEMINI_TTS_MODEL", "gemini-2.5-flash-preview-tts")
 GEMINI_TTS_VOICE = os.getenv("GEMINI_TTS_VOICE", "Kore")
 
-# --- Demo tax database (SQLite, synthetic data) ---
-# Deliberately separate from the real Postgres auth DB — see backend/app/chat/db/.
-DEMO_DB_PATH = os.getenv("DEMO_DB_PATH", "/workspace/data/demo_tax.db")
+# Baked into the image at build time (see backend/Dockerfile) — no
+# network/API key, so it can never be rate-limited and fails over instantly
+# if Gemini isn't available. Piper voices are per-language like edge_tts.
+PIPER_VOICE_DIR = os.getenv("PIPER_VOICE_DIR", "/workspace/piper_voices")
+PIPER_VOICE_EN = os.getenv("PIPER_VOICE_EN", "en_US-lessac-medium")
+PIPER_VOICE_AR = os.getenv("PIPER_VOICE_AR", "ar_JO-kareem-medium")
+
+EDGE_TTS_VOICE_EN = os.getenv("EDGE_TTS_VOICE_EN", "en-US-AriaNeural")
+EDGE_TTS_VOICE_AR = os.getenv("EDGE_TTS_VOICE_AR", "ar-EG-SalmaNeural")
+ELEVENLABS_MODEL = os.getenv("ELEVENLABS_MODEL", "eleven_multilingual_v2")
+ELEVENLABS_VOICE_ID = os.getenv("ELEVENLABS_VOICE_ID", "")
+
+# --- database_query: tax schema lives in the same Postgres DB as auth (app.config.DATABASE_URL) ---
 # openai/gpt-oss-20b specifically — llama-3.3-70b-versatile reliably wraps
 # its SQL in ```sql fences that break execution; gpt-oss-20b doesn't. See
 # backend/app/chat/db/query_chain.py.

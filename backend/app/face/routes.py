@@ -1,3 +1,4 @@
+import datetime
 import logging
 import numpy as np
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
@@ -77,9 +78,12 @@ async def enroll(
     db.commit()
     logger.info(f" FACE PROFILE SAVED: user_id={user.id}")
 
+    user.last_active_at = datetime.datetime.now(datetime.timezone.utc)
+    db.commit()
+
     token = create_token(str(user.id), "authenticated", SESSION_TOKEN_TTL_MINUTES)
     logger.info(f" AUTHENTICATED TOKEN ISSUED: user_id={user.id}")
-    
+
     return FaceStageResponse(access_token=token, stage="authenticated")
 
 
@@ -119,6 +123,10 @@ async def verify(
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Face does not match this account.")
 
     logger.info(f" FACE VERIFIED: user_id={user.id}, similarity={similarity:.4f}")
+
+    user.last_active_at = datetime.datetime.now(datetime.timezone.utc)
+    db.commit()
+
     token = create_token(str(user.id), "authenticated", SESSION_TOKEN_TTL_MINUTES)
     logger.info(f"AUTHENTICATED TOKEN ISSUED: user_id={user.id}")
     
