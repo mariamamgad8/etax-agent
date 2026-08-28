@@ -16,12 +16,13 @@ from groq import Groq
 from pydantic import BaseModel, ValidationError
 
 from app.chat.config import (
-    GEMINI_API_KEY,
+    GEMINI_LLM_API_KEYS,
     GEMINI_LLM_MODELS,
     GROQ_API_KEY,
     GROQ_LLM_MODELS,
     LLM_PROVIDER_ORDER,
     MODEL_COOLDOWN_SECONDS,
+    gemini_key_label,
 )
 from app.chat.providers.base import AllProvidersExhausted, CooldownTracker, ProviderError
 
@@ -32,7 +33,11 @@ T = TypeVar("T", bound=BaseModel)
 _cooldown = CooldownTracker(MODEL_COOLDOWN_SECONDS)
 
 _groq_client = Groq(api_key=GROQ_API_KEY) if GROQ_API_KEY else None
-_gemini_client = genai.Client(api_key=GEMINI_API_KEY) if GEMINI_API_KEY else None
+# One client per configured Gemini key (GEMINI_LLM_API_KEYS) — previously a
+# single hardcoded key with no fallback at all, unlike TTS's own key
+# rotation. Each (key, client) pair is tried in order on every Gemini call;
+# see _call_gemini_text/_call_gemini_structured.
+_gemini_clients = [(key, genai.Client(api_key=key)) for key in GEMINI_LLM_API_KEYS]
 
 # Groq models known to support strict response_format={"type": "json_schema"}.
 # Others still get asked for JSON (json_object mode + an inline schema
@@ -65,14 +70,23 @@ def _call_groq_text(model: str, system: str, user: str) -> str:
 
 
 def _call_gemini_text(model: str, system: str, user: str) -> str:
-    if _gemini_client is None:
-        raise ProviderError("GEMINI_API_KEY is not configured.")
-    response = _gemini_client.models.generate_content(
-        model=model,
-        contents=user,
-        config=genai_types.GenerateContentConfig(system_instruction=system, temperature=0.2),
-    )
-    return response.text or ""
+    if not _gemini_clients:
+        raise ProviderError("No Gemini API key is configured (GEMINI_LLM_API_KEYS/GEMINI_API_KEY).")
+    last_exc: Exception | None = None
+    for key, client in _gemini_clients:
+        try:
+            response = client.models.generate_content(
+                model=model,
+                contents=user,
+                config=genai_types.GenerateContentConfig(system_instruction=system, temperature=0.2),
+            )
+            return response.text or ""
+        except Exception as exc:  # noqa: BLE001 - try the next key before giving up on this model
+            logger.warning(
+                "[LLM] gemini:%s failed on %s — %s: %s", model, gemini_key_label(key), type(exc).__name__, exc,
+            )
+            last_exc = exc
+    raise ProviderError(f"All {len(_gemini_clients)} configured Gemini key(s) failed for model {model}. Last error: {last_exc}")
 
 
 def call_llm_text(system: str, user: str) -> str:
@@ -88,7 +102,7 @@ def call_llm_text(system: str, user: str) -> str:
             logger.info("[LLM] text call answered by %s", key)
             return text
         except Exception as exc:  # noqa: BLE001 - any provider failure just moves to the next candidate
-            logger.warning("[LLM] text call failed on %s: %s", key, exc)
+            logger.warning("[LLM] text call failed on %s — %s: %s", key, type(exc).__name__, exc)
             _cooldown.mark(key)
             last_error = exc
     raise AllProvidersExhausted(f"Every configured LLM model failed. Last error: {last_error}")
@@ -137,8 +151,8 @@ def _call_groq_structured(model: str, system: str, user: str, response_model: ty
 
 
 def _call_gemini_structured(model: str, system: str, user: str, response_model: type[T]) -> T:
-    if _gemini_client is None:
-        raise ProviderError("GEMINI_API_KEY is not configured.")
+    if not _gemini_clients:
+        raise ProviderError("No Gemini API key is configured (GEMINI_LLM_API_KEYS/GEMINI_API_KEY).")
     # Passing response_schema=response_model directly lets the SDK derive a
     # schema from Pydantic, but Pydantic's "additionalProperties" keyword
     # (from extra="forbid") has no equivalent in Gemini's Schema proto and
@@ -150,21 +164,34 @@ def _call_gemini_structured(model: str, system: str, user: str, response_model: 
         "\n\nRespond with ONLY a single JSON object matching this JSON schema, "
         f"no other text before or after it:\n{json.dumps(schema)}"
     )
-    response = _gemini_client.models.generate_content(
-        model=model,
-        contents=user,
-        config=genai_types.GenerateContentConfig(
-            system_instruction=system + schema_note,
-            temperature=0,
-            response_mime_type="application/json",
-        ),
+    config = genai_types.GenerateContentConfig(
+        system_instruction=system + schema_note,
+        temperature=0,
+        response_mime_type="application/json",
     )
-    try:
-        return response_model.model_validate_json(response.text)
-    except ValidationError as exc:
-        raise ProviderError(
-            f"Gemini model {model} returned invalid JSON for {response_model.__name__}: {exc}"
-        ) from exc
+
+    # Only an API-call failure (auth/rate-limit/network) rotates to the next
+    # key — a malformed-JSON response is a model/prompt problem, not a key
+    # problem, so it's raised immediately rather than retried against every
+    # other key for no benefit (same prompt, same model, same bad output).
+    last_exc: Exception | None = None
+    for key, client in _gemini_clients:
+        try:
+            response = client.models.generate_content(model=model, contents=user, config=config)
+        except Exception as exc:  # noqa: BLE001 - try the next key before giving up on this model
+            logger.warning(
+                "[LLM] gemini:%s (structured) failed on %s — %s: %s",
+                model, gemini_key_label(key), type(exc).__name__, exc,
+            )
+            last_exc = exc
+            continue
+        try:
+            return response_model.model_validate_json(response.text)
+        except ValidationError as exc:
+            raise ProviderError(
+                f"Gemini model {model} returned invalid JSON for {response_model.__name__}: {exc}"
+            ) from exc
+    raise ProviderError(f"All {len(_gemini_clients)} configured Gemini key(s) failed for model {model}. Last error: {last_exc}")
 
 
 def call_llm_structured(system: str, user: str, response_model: type[T]) -> T:
@@ -184,7 +211,10 @@ def call_llm_structured(system: str, user: str, response_model: type[T]) -> T:
             logger.info("[LLM] structured call (%s) answered by %s", response_model.__name__, key)
             return result
         except Exception as exc:  # noqa: BLE001
-            logger.warning("[LLM] structured call (%s) failed on %s: %s", response_model.__name__, key, exc)
+            logger.warning(
+                "[LLM] structured call (%s) failed on %s — %s: %s",
+                response_model.__name__, key, type(exc).__name__, exc,
+            )
             _cooldown.mark(key)
             last_error = exc
     raise AllProvidersExhausted(f"Every configured LLM model failed. Last error: {last_error}")

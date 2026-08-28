@@ -168,7 +168,9 @@ def test_gemini_rotates_to_next_key_when_first_fails(monkeypatch):
         def __init__(self, models):
             self.models = models
 
-    monkeypatch.setattr(tts, "_gemini_clients", [FakeClient(FailingModels()), FakeClient(SucceedingModels())])
+    monkeypatch.setattr(
+        tts, "_gemini_clients", [("key1", FakeClient(FailingModels())), ("key2", FakeClient(SucceedingModels()))]
+    )
 
     audio, mime = tts._synthesize_gemini("Hello there.")
 
@@ -211,7 +213,11 @@ def test_gemini_rotates_through_three_keys(monkeypatch):
     monkeypatch.setattr(
         tts,
         "_gemini_clients",
-        [FakeClient(FailingModels("key1")), FakeClient(FailingModels("key2")), FakeClient(SucceedingModels())],
+        [
+            ("key1", FakeClient(FailingModels("key1"))),
+            ("key2", FakeClient(FailingModels("key2"))),
+            ("key3", FakeClient(SucceedingModels())),
+        ],
     )
 
     audio, mime = tts._synthesize_gemini("Hello there.")

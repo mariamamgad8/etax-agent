@@ -48,6 +48,16 @@ services:
       COHERE_API_KEY: ${COHERE_API_KEY:-}
       GROQ_API_KEY: ${GROQ_API_KEY:-}
       GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      # Additional Gemini keys, added one at a time under whatever ad-hoc
+      # label was used when each was obtained — see config.py's
+      # _GEMINI_KEY_ENV_VARS. Docker only forwards env vars explicitly
+      # listed here, so a new key in .env alone (without also being added to
+      # this list) is invisible to the container regardless.
+      GEMINI_API_KEY_1: ${GEMINI_API_KEY_1:-}
+      mam_GEMINI_API_KEY: ${mam_GEMINI_API_KEY:-}
+      sal_GEMINI_API_KEY: ${sal_GEMINI_API_KEY:-}
+      far_GEMINI_API_KEY: ${far_GEMINI_API_KEY:-}
+      saf_GEMINI_API_KEY: ${saf_GEMINI_API_KEY:-}
       ELEVENLABS_TTS_KEY: ${ELEVENLABS_TTS_KEY:-}
       STT_DETECT_PROVIDER: ${STT_DETECT_PROVIDER:-groq}
       STT_TRANSCRIBE_PROVIDER: ${STT_TRANSCRIBE_PROVIDER:-cohere}

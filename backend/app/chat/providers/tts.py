@@ -64,6 +64,7 @@ from app.chat.config import (
     GEMINI_TTS_VOICE,
     MODEL_COOLDOWN_SECONDS,
     TTS_PROVIDER_ORDER,
+    gemini_key_label,
 )
 from app.chat.providers.base import AllProvidersExhausted, CooldownTracker, ProviderError
 from app.chat.responses import detect_response_language
@@ -80,7 +81,7 @@ _GEMINI_HTTP_OPTIONS = genai_types.HttpOptions(
     retry_options=genai_types.HttpRetryOptions(attempts=1),
 )
 _gemini_clients = [
-    genai.Client(api_key=key, http_options=_GEMINI_HTTP_OPTIONS) for key in GEMINI_TTS_API_KEYS
+    (key, genai.Client(api_key=key, http_options=_GEMINI_HTTP_OPTIONS)) for key in GEMINI_TTS_API_KEYS
 ]
 
 # ElevenLabs' public "Rachel" voice — used only if ELEVENLABS_VOICE_ID isn't
@@ -134,7 +135,7 @@ def _synthesize_gemini(text: str) -> tuple[bytes, str]:
     )
 
     last_exc: Exception | None = None
-    for i, client in enumerate(_gemini_clients):
+    for key, client in _gemini_clients:
         try:
             response = client.models.generate_content(model=GEMINI_TTS_MODEL, contents=prompt, config=config)
             candidates = response.candidates or []
@@ -144,7 +145,9 @@ def _synthesize_gemini(text: str) -> tuple[bytes, str]:
                 raise ProviderError("Gemini TTS returned no audio data.")
             return _pcm_to_wav(inline_data.data, sample_rate=24000), "audio/wav"
         except Exception as exc:  # noqa: BLE001 - try the next key before giving up on Gemini entirely
-            logger.warning("[TTS] gemini key #%d/%d failed: %s", i + 1, len(_gemini_clients), exc)
+            logger.warning(
+                "[TTS] gemini:%s failed on %s — %s: %s", GEMINI_TTS_MODEL, gemini_key_label(key), type(exc).__name__, exc,
+            )
             last_exc = exc
     raise ProviderError(f"All {len(_gemini_clients)} configured Gemini TTS key(s) failed. Last error: {last_exc}")
 
@@ -198,7 +201,9 @@ def synthesize_speech(text: str) -> tuple[bytes, str]:
             return audio_bytes, mime_type
         except Exception as exc:  # noqa: BLE001 - any provider failure just moves to the next candidate
             latency_ms = (time.perf_counter() - started) * 1000
-            logger.warning("[TTS] call failed on %s after %.0fms: %s", provider, latency_ms, exc)
+            logger.warning(
+                "[TTS] call failed on %s after %.0fms — %s: %s", provider, latency_ms, type(exc).__name__, exc,
+            )
             _cooldown.mark(provider)
             last_error = exc
     raise AllProvidersExhausted(f"Every configured TTS provider failed. Last error: {last_error}")

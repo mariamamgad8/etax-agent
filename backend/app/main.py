@@ -23,7 +23,9 @@ from app.chat.config import (
     COHERE_API_KEY,
     ELEVENLABS_API_KEY,
     GEMINI_API_KEY,
+    GEMINI_LLM_API_KEYS,
     GEMINI_LLM_MODELS,
+    GEMINI_TTS_API_KEYS,
     GROQ_API_KEY,
     GROQ_LLM_MODELS,
     LLM_PROVIDER_ORDER,
@@ -74,6 +76,10 @@ def on_startup():
                 ("ELEVENLABS", ELEVENLABS_API_KEY),
             )
         ),
+    )
+    logger.info(
+        "[STARTUP] Gemini key pool: %d for LLM, %d for TTS",
+        len(GEMINI_LLM_API_KEYS), len(GEMINI_TTS_API_KEYS),
     )
     logger.info(
         "[STARTUP] LLM fallback chain: %s",

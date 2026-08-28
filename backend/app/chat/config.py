@@ -24,6 +24,39 @@ GROQ_API_KEY = os.getenv("GROQ_API_KEY", "")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
 ELEVENLABS_API_KEY = os.getenv("ELEVENLABS_TTS_KEY", "")
 
+# Every Gemini key currently on hand, from however many of these env vars are
+# set. No fixed naming scheme — new keys get added one at a time under
+# whatever ad-hoc label was used when they were obtained (GEMINI_API_KEY_1,
+# mam_/sal_/far_/saf_GEMINI_API_KEY, ...) — so this is an explicit, growable
+# list of the var NAMES, not a dynamic scan of the whole environment (keeps
+# it obvious which vars actually matter, and easy to extend as more arrive).
+# GEMINI_KEY_NAMES maps each key's VALUE back to the var it came from, so a
+# per-key failure can be logged as e.g. "mam_GEMINI_API_KEY" instead of a
+# meaningless index — providers/llm.py and providers/tts.py both only ever
+# see the key string itself, never which of these vars supplied it.
+_GEMINI_KEY_ENV_VARS = [
+    "GEMINI_API_KEY",
+    "GEMINI_API_KEY_1",
+    "mam_GEMINI_API_KEY",
+    "sal_GEMINI_API_KEY",
+    "far_GEMINI_API_KEY",
+    "saf_GEMINI_API_KEY",
+]
+GEMINI_KEY_NAMES: dict[str, str] = {
+    value: name for name in _GEMINI_KEY_ENV_VARS if (value := os.getenv(name, "").strip())
+}
+_ALL_GEMINI_KEYS = list(GEMINI_KEY_NAMES)  # de-duplicated, first-seen order (dict preserves insertion order)
+
+
+def gemini_key_label(key: str) -> str:
+    """A safe-to-log identifier for a Gemini key — its source env var name when
+    known, otherwise a masked suffix (never the full key)."""
+    name = GEMINI_KEY_NAMES.get(key)
+    if name:
+        return name
+    return f"key ending in ...{key[-4:]}" if len(key) >= 4 else "unknown key"
+
+
 # --- Speech to text ---
 # Cohere Transcribe has no auto-detect mode — confirmed live: omitting
 # `language` 400s ("missing required field 'language'"), and `language="auto"`
@@ -56,6 +89,12 @@ GROQ_LLM_MODELS = _split_csv(
     ["openai/gpt-oss-20b", "llama-3.1-8b-instant", "llama-3.3-70b-versatile", "openai/gpt-oss-120b"],
 )
 GEMINI_LLM_MODELS = _split_csv("GEMINI_LLM_MODELS", ["gemini-flash-latest"])
+# All available Gemini keys, rotated through independently of TTS's own pool
+# below (each service tries the whole pool on its own — see providers/llm.py)
+# — previously the LLM's Gemini calls used a single hardcoded key with no
+# fallback at all, unlike TTS. Override with GEMINI_LLM_API_KEYS explicitly
+# if a different subset is ever wanted.
+GEMINI_LLM_API_KEYS = _split_csv("GEMINI_LLM_API_KEYS", _ALL_GEMINI_KEYS)
 
 # --- Provider management ---
 # Kept deliberately short: this only ever gates trying the SAME provider
@@ -80,14 +119,13 @@ MODEL_COOLDOWN_SECONDS = int(os.getenv("MODEL_COOLDOWN_SECONDS", "2"))
 TTS_PROVIDER_ORDER = _split_csv("TTS_PROVIDER_ORDER", ["gemini", "edge_tts", "elevenlabs"])
 
 # Gemini's free TTS quota is small (10 requests/day, confirmed live) and
-# shared across however many keys are configured here — GEMINI_TTS_API_KEYS
-# is a dedicated, separate pool from GEMINI_API_KEY (used for LLM calls) so
-# TTS usage never eats into LLM quota or vice versa. Multiple comma-
+# shared across however many keys are configured here. Multiple comma-
 # separated keys let providers/tts.py rotate to the next one when a key is
 # rate-limited/exhausted rather than falling through to edge_tts immediately
-# — only once every key is exhausted does the provider itself fail. Falls
-# back to the shared GEMINI_API_KEY if no dedicated key is configured.
-GEMINI_TTS_API_KEYS = _split_csv("GEMINI_TTS_API_KEYS", [GEMINI_API_KEY] if GEMINI_API_KEY else [])
+# — only once every key is exhausted does the provider itself fail. Defaults
+# to the same full key pool the LLM uses (see GEMINI_LLM_API_KEYS above) —
+# override with GEMINI_TTS_API_KEYS explicitly for a different subset.
+GEMINI_TTS_API_KEYS = _split_csv("GEMINI_TTS_API_KEYS", _ALL_GEMINI_KEYS)
 GEMINI_TTS_MODEL = os.getenv("GEMINI_TTS_MODEL", "gemini-2.5-flash-preview-tts")
 GEMINI_TTS_VOICE = os.getenv("GEMINI_TTS_VOICE", "Kore")
 
