@@ -33,8 +33,12 @@ client = TestClient(app)
 def _reset_tts_cooldown():
     """A provider failure in one test must not leave it cooling down for the next."""
     tts._cooldown._until.clear()
+    tts._gemini_key_quota._until.clear()
+    tts._gemini_rotation._next = 0
     yield
     tts._cooldown._until.clear()
+    tts._gemini_key_quota._until.clear()
+    tts._gemini_rotation._next = 0
 
 
 # --- provider order ----------------------------------------------------------

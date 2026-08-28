@@ -66,12 +66,22 @@ from app.chat.config import (
     TTS_PROVIDER_ORDER,
     gemini_key_label,
 )
-from app.chat.providers.base import AllProvidersExhausted, CooldownTracker, ProviderError
+from app.chat.providers.base import AllProvidersExhausted, CooldownTracker, ProviderError, RotatingStart
+from app.chat.providers.gemini_quota import gemini_block_seconds
 from app.chat.responses import detect_response_language
 
 logger = logging.getLogger(__name__)
 
 _cooldown = CooldownTracker(MODEL_COOLDOWN_SECONDS)
+# Per-(key, model) quota state, same rationale as providers/llm.py's own
+# tracker: a key/model already known to be exhausted (e.g. the free tier's
+# 3 RPM / 10 RPD cap on the TTS model itself) is skipped with NO network call
+# on the next attempt, instead of re-eating a ~10s timeout per key every
+# request until the whole pool happens to be tried again from scratch — this
+# is what previously made a fully-exhausted TTS key pool take up to
+# len(keys) * 10s before falling through to edge_tts.
+_gemini_key_quota = CooldownTracker(MODEL_COOLDOWN_SECONDS)
+_gemini_rotation = RotatingStart()
 
 # No SDK-level retries (see module docstring) and a tight timeout, so a
 # rate-limited/unresponsive key fails in ~10s, not ~15s of backoff on top of
@@ -135,7 +145,12 @@ def _synthesize_gemini(text: str) -> tuple[bytes, str]:
     )
 
     last_exc: Exception | None = None
-    for key, client in _gemini_clients:
+    attempted = False
+    for key, client in _gemini_rotation.rotate(_gemini_clients):
+        quota_key = f"{key}:{GEMINI_TTS_MODEL}"
+        if _gemini_key_quota.is_cooling_down(quota_key):
+            continue
+        attempted = True
         try:
             response = client.models.generate_content(model=GEMINI_TTS_MODEL, contents=prompt, config=config)
             candidates = response.candidates or []
@@ -145,11 +160,18 @@ def _synthesize_gemini(text: str) -> tuple[bytes, str]:
                 raise ProviderError("Gemini TTS returned no audio data.")
             return _pcm_to_wav(inline_data.data, sample_rate=24000), "audio/wav"
         except Exception as exc:  # noqa: BLE001 - try the next key before giving up on Gemini entirely
+            reason, block_seconds = gemini_block_seconds(exc, MODEL_COOLDOWN_SECONDS)
+            _gemini_key_quota.mark(quota_key, seconds=block_seconds)
             logger.warning(
-                "[TTS] gemini:%s failed on %s — %s: %s", GEMINI_TTS_MODEL, gemini_key_label(key), type(exc).__name__, exc,
+                "[TTS] gemini:%s failed on %s — %s: %s (%s, skipping this key for %.0fs)",
+                GEMINI_TTS_MODEL, gemini_key_label(key), type(exc).__name__, exc, reason, block_seconds,
             )
             last_exc = exc
-    raise ProviderError(f"All {len(_gemini_clients)} configured Gemini TTS key(s) failed. Last error: {last_exc}")
+    if not attempted:
+        raise ProviderError(
+            f"All {len(_gemini_clients)} configured Gemini TTS key(s) are currently quota-blocked."
+        )
+    raise ProviderError(f"All attempted Gemini TTS key(s) failed. Last error: {last_exc}")
 
 
 async def _edge_tts_stream(text: str, voice: str) -> bytes:

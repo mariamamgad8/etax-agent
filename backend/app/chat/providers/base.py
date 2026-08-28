@@ -34,6 +34,31 @@ class CooldownTracker:
                 return False
             return True
 
-    def mark(self, key: str) -> None:
+    def mark(self, key: str, seconds: float | None = None) -> None:
+        """`seconds` overrides the tracker's default — used when a caller knows
+        a more accurate block duration for this specific failure (e.g. a
+        Gemini quota error's own retryDelay) than the generic cooldown."""
         with self._lock:
-            self._until[key] = time.monotonic() + self._seconds
+            self._until[key] = time.monotonic() + (seconds if seconds is not None else self._seconds)
+
+
+class RotatingStart:
+    """
+    Thread-safe rotating start index for a fallback list, so repeated calls
+    don't always try the same first candidate. Without this, every request
+    hits key #1 first — which drives that one key into its own per-minute
+    rate limit while the rest of the pool sits unused — instead of spreading
+    load evenly across all configured keys.
+    """
+
+    def __init__(self):
+        self._next = 0
+        self._lock = threading.Lock()
+
+    def rotate(self, items: list) -> list:
+        if not items:
+            return items
+        with self._lock:
+            start = self._next % len(items)
+            self._next += 1
+        return items[start:] + items[:start]
