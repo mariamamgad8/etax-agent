@@ -6,9 +6,9 @@ is idempotent on its own existence check — not one global gate — so these
 tests exercise each section independently, not just the top-level seed().
 """
 from app.auth.security import verify_password
-from app.chat.db.seed import _DEMO_ACCOUNTS, is_seeded, seed
+from app.chat.db.seed import _DEMO_ACCOUNTS, _DEMO_FRAUD_LINKS, is_seeded, seed
 from app.database.models import FaceProfile, User
-from app.database.tax_models import Company, CompanyOwner, Taxpayer
+from app.database.tax_models import FRAUD_REVIEW_STATUSES, Company, CompanyOwner, FraudRecord, Taxpayer
 
 
 def test_seed_is_idempotent(db):
@@ -77,6 +77,51 @@ def test_demo_accounts_seeding_is_idempotent(db):
     user_count_2 = db.query(User).filter(User.username.in_([a[2] for a in _DEMO_ACCOUNTS])).count()
 
     assert user_count_1 == user_count_2 == len(_DEMO_ACCOUNTS)
+
+
+def test_seed_loads_all_fraud_dataset_rows_with_unique_9_digit_codes(db):
+    seed(db)
+    count = db.query(FraudRecord).count()
+    assert count == 50_000
+
+    codes = [r.claim_code for r in db.query(FraudRecord.claim_code).all()]
+    assert len(set(codes)) == 50_000  # every code is unique
+    assert all(len(c) == 9 and c.isdigit() and c[0] != "0" for c in codes)
+
+
+def test_fraud_records_never_store_the_training_label():
+    """The Fraud (training-target) column must never make it into the DB row —
+    the model computes its own probability at prediction time; storing the
+    answer next to the input would defeat the point of a review step."""
+    assert not hasattr(FraudRecord, "Fraud")
+
+
+def test_fraud_records_seeding_is_idempotent(db):
+    seed(db)
+    count_1 = db.query(FraudRecord).count()
+
+    seed(db)
+    count_2 = db.query(FraudRecord).count()
+
+    assert count_1 == count_2 == 50_000
+
+
+def test_demo_accounts_are_linked_to_their_fraud_records(db):
+    """
+    review_status is deliberately NOT asserted to be "pending" here — seeding
+    only ever sets that as the INITIAL value and, being idempotent, never
+    resets it afterward. On a real dev database these demo accounts are also
+    the ones actually used interactively (e.g. requesting a review through
+    the live chat UI), so their current status is real, mutable app state by
+    the time this test runs — only the *link itself* is what seeding
+    guarantees, and is what's actually under test here.
+    """
+    seed(db)
+    for taxpayer_id, fraud_record_id in _DEMO_FRAUD_LINKS:
+        taxpayer = db.get(Taxpayer, taxpayer_id)
+        record = db.get(FraudRecord, fraud_record_id)
+        assert record.user_id == taxpayer.user_id
+        assert record.review_status in FRAUD_REVIEW_STATUSES
 
 
 def test_demo_accounts_get_a_face_profile_when_a_real_embedding_already_exists(db):

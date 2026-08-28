@@ -53,19 +53,18 @@ export const api = {
     form.append('image', blob, 'capture.jpg');
     return request('/face/verify', { method: 'POST', token, body: form, isForm: true });
   },
-  sendChatMessage: (token, message) =>
-    request('/chat/message', { method: 'POST', token, body: { message } }),
+  getWelcome: (token, language) => request(`/chat/welcome?language=${encodeURIComponent(language)}`, { token }),
+  // threadId is reused across the whole chat session (not just interrupt
+  // resumes) once the first response hands one back — this is what lets the
+  // backend's cross-turn memory (see graph.py's prepare_db_question) work at
+  // all, since a fresh thread_id would start memory over on every message.
+  sendChatMessage: (token, message, threadId) =>
+    request('/chat/message', { method: 'POST', token, body: { message, thread_id: threadId || undefined } }),
   resumeChatForm: (token, threadId, formResponse) =>
     request('/chat/message', {
       method: 'POST',
       token,
       body: { thread_id: threadId, form_response: formResponse },
-    }),
-  extractFraudFields: (token, text, currentFields) =>
-    request('/chat/fraud/extract', {
-      method: 'POST',
-      token,
-      body: { text, current_fields: currentFields || {} },
     }),
   transcribeAudio: (token, blob, filename) => {
     const form = new FormData();

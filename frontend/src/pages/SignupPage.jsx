@@ -9,7 +9,7 @@ import { Alert } from '../components/feedback/Alert.jsx';
 import { Checkbox } from '../components/forms/Checkbox.jsx';
 import { TextField } from '../components/forms/TextField.jsx';
 
-const INITIAL = { full_name: '', username: '', email: '', password: '', confirm_password: '' };
+const INITIAL = { full_name: '', username: '', email: '', password: '', confirm_password: '', tax_record_code: '' };
 
 export function SignupPage() {
   const navigate = useNavigate();
@@ -31,6 +31,10 @@ export function SignupPage() {
     }
     if (values.password.length < 8) {
       setError(t('auth.passwordTooShort'));
+      return;
+    }
+    if (!/^\d{9}$/.test(values.tax_record_code)) {
+      setError(t('auth.taxRecordCodeInvalid'));
       return;
     }
     if (!agree) {
@@ -60,6 +64,14 @@ export function SignupPage() {
         <TextField label={t('auth.fullNameLabel')} required placeholder={t('auth.fullNamePlaceholder')} value={values.full_name} onChange={update('full_name')} />
         <TextField label={t('auth.emailLabel')} type="email" required value={values.email} onChange={update('email')} hint={t('auth.emailHint')} />
         <TextField label={t('auth.usernameFieldLabel')} required value={values.username} onChange={update('username')} hint={t('auth.usernameHint')} />
+        <TextField
+          label={t('auth.taxRecordCodeLabel')}
+          required
+          value={values.tax_record_code}
+          onChange={update('tax_record_code')}
+          hint={t('auth.taxRecordCodeHint')}
+          maxLength={9}
+        />
         <TextField label={t('auth.passwordLabel')} type="password" revealable required value={values.password} onChange={update('password')} hint={t('auth.passwordHint')} />
         <TextField label={t('auth.confirmPasswordLabel')} type="password" revealable required value={values.confirm_password} onChange={update('confirm_password')} />
         <Checkbox checked={agree} onChange={(e) => setAgree(e.target.checked)} label={t('auth.agreeToTerms')} />

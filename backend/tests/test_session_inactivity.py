@@ -25,7 +25,7 @@ client = TestClient(app)
 
 
 @pytest.fixture()
-def authed_user(db, unique_suffix):
+def authed_user(db, unique_suffix, next_fraud_code):
     username = f"inactivity_{unique_suffix}"
     response = client.post(
         "/auth/signup",
@@ -35,6 +35,7 @@ def authed_user(db, unique_suffix):
             "email": f"{username}@example.com",
             "password": "testpass123",
             "confirm_password": "testpass123",
+            "tax_record_code": next_fraud_code(),
         },
     )
     user_id = response.json()["user"]["id"]
@@ -42,6 +43,7 @@ def authed_user(db, unique_suffix):
 
     yield user_id, {"Authorization": f"Bearer {token}"}
 
+    db.execute(text("UPDATE tax.fraud_records SET user_id = NULL WHERE user_id = :uid"), {"uid": user_id})
     db.query(User).filter_by(username=username).delete()
     db.commit()
 
@@ -115,7 +117,7 @@ def test_activity_slides_the_window_forward(authed_user, db):
     assert user.last_active_at > almost_stale
 
 
-def test_pending_enrollment_stage_is_not_subject_to_inactivity_check(db, unique_suffix):
+def test_pending_enrollment_stage_is_not_subject_to_inactivity_check(db, unique_suffix, next_fraud_code):
     """Only the 'authenticated' stage has sliding-session semantics — sign-in steps are unaffected."""
     username = f"inactivity_pending_{unique_suffix}"
     response = client.post(
@@ -126,6 +128,7 @@ def test_pending_enrollment_stage_is_not_subject_to_inactivity_check(db, unique_
             "email": f"{username}@example.com",
             "password": "testpass123",
             "confirm_password": "testpass123",
+            "tax_record_code": next_fraud_code(),
         },
     )
     token = response.json()["access_token"]
@@ -154,5 +157,6 @@ def test_pending_enrollment_stage_is_not_subject_to_inactivity_check(db, unique_
     # this check at all.
     assert resp.status_code != 401
 
+    db.execute(text("UPDATE tax.fraud_records SET user_id = NULL WHERE user_id = :uid"), {"uid": user_id})
     db.query(User).filter_by(username=username).delete()
     db.commit()

@@ -28,6 +28,7 @@ def test_expected_tables_are_schema_qualified():
         "company_owners",
         "transactions",
         "items",
+        "fraud_records",
     }
 
 

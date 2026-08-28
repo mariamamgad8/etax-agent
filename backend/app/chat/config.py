@@ -58,39 +58,38 @@ GROQ_LLM_MODELS = _split_csv(
 GEMINI_LLM_MODELS = _split_csv("GEMINI_LLM_MODELS", ["gemini-flash-latest"])
 
 # --- Provider management ---
-MODEL_COOLDOWN_SECONDS = int(os.getenv("MODEL_COOLDOWN_SECONDS", "60"))
+# Kept deliberately short: this only ever gates trying the SAME provider
+# again too soon after it just failed — the fallback chain has already moved
+# on to the next provider within the same request regardless of this value.
+# A long cooldown (formerly 60s) just meant a provider that recovered
+# quickly stayed skipped for a full minute for no benefit.
+MODEL_COOLDOWN_SECONDS = int(os.getenv("MODEL_COOLDOWN_SECONDS", "2"))
 
 # --- TTS ---
 # Gemini is the default/primary provider — confirmed live as the one that
 # actually serves audio for this project's accounts (see providers/tts.py's
 # module docstring for the ElevenLabs plan limitation that ruled it out as
-# the first attempt). Piper (local/offline ONNX voice models, no network
-# call, no rate limit) is the second attempt, right after Gemini — live
-# comparison found edge_tts noticeably worse on Arabic, and a local model
-# also can't be network-slow, so it's a fast fallback too. edge_tts is
-# third, ElevenLabs stays configurable as a last resort rather than deleted,
-# per this project's fallback-abstraction convention — swap
-# TTS_PROVIDER_ORDER to reorder/drop providers without code changes.
-TTS_PROVIDER_ORDER = _split_csv("TTS_PROVIDER_ORDER", ["gemini", "piper", "edge_tts", "elevenlabs"])
+# the first attempt). Piper (local ONNX voices) was removed after live
+# ONNXRuntime crashes on real input ("Reshape node ... dimension with value
+# zero exceeds the dimension size of the input tensor") — not just a
+# fallback-order demotion, the code path is gone entirely (see
+# providers/tts.py). edge_tts is the second attempt, ElevenLabs stays
+# configurable as a last resort rather than deleted, per this project's
+# fallback-abstraction convention — swap TTS_PROVIDER_ORDER to reorder/drop
+# providers without code changes.
+TTS_PROVIDER_ORDER = _split_csv("TTS_PROVIDER_ORDER", ["gemini", "edge_tts", "elevenlabs"])
 
 # Gemini's free TTS quota is small (10 requests/day, confirmed live) and
 # shared across however many keys are configured here — GEMINI_TTS_API_KEYS
 # is a dedicated, separate pool from GEMINI_API_KEY (used for LLM calls) so
 # TTS usage never eats into LLM quota or vice versa. Multiple comma-
 # separated keys let providers/tts.py rotate to the next one when a key is
-# rate-limited/exhausted rather than falling through to Piper immediately —
-# only once every key is exhausted does the provider itself fail. Falls
+# rate-limited/exhausted rather than falling through to edge_tts immediately
+# — only once every key is exhausted does the provider itself fail. Falls
 # back to the shared GEMINI_API_KEY if no dedicated key is configured.
 GEMINI_TTS_API_KEYS = _split_csv("GEMINI_TTS_API_KEYS", [GEMINI_API_KEY] if GEMINI_API_KEY else [])
 GEMINI_TTS_MODEL = os.getenv("GEMINI_TTS_MODEL", "gemini-2.5-flash-preview-tts")
 GEMINI_TTS_VOICE = os.getenv("GEMINI_TTS_VOICE", "Kore")
-
-# Baked into the image at build time (see backend/Dockerfile) — no
-# network/API key, so it can never be rate-limited and fails over instantly
-# if Gemini isn't available. Piper voices are per-language like edge_tts.
-PIPER_VOICE_DIR = os.getenv("PIPER_VOICE_DIR", "/workspace/piper_voices")
-PIPER_VOICE_EN = os.getenv("PIPER_VOICE_EN", "en_US-lessac-medium")
-PIPER_VOICE_AR = os.getenv("PIPER_VOICE_AR", "ar_JO-kareem-medium")
 
 EDGE_TTS_VOICE_EN = os.getenv("EDGE_TTS_VOICE_EN", "en-US-AriaNeural")
 EDGE_TTS_VOICE_AR = os.getenv("EDGE_TTS_VOICE_AR", "ar-EG-SalmaNeural")

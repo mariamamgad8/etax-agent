@@ -27,7 +27,7 @@ Intent = Literal[
 # actual node is a Python lookup, never left to the model's judgment.
 INTENT_ROUTING: dict[str, str] = {
     "greeting": "greeting",
-    "fraud_assessment": "extract_fraud_fields",
+    "fraud_assessment": "load_fraud_record",
     "database_query": "prepare_db_question",
     "other": "other",
     "unclear": "clarify_intent",
@@ -62,9 +62,13 @@ detect, sus. Treat these as strong evidence for fraud_assessment even if the sen
 the word "tax" or "records" also appears; the ACTION being requested (a risk/soundness check) is what \
 matters, not the noun it's attached to.
 - database_query: the user wants to look up specific stored tax records/data already on file — \
-payments, returns, income, ownership share, transactions, invoices, taxpayer/company info. Signal \
-verbs: retrieve, query, get me, give me, show me, "how much", "what is my share". This is about \
-reading back a stored fact, not judging whether something is correct/risky.
+payments, returns, income, ownership share, transactions, invoices, taxpayer/company info, item \
+prices/quantities sold. Signal verbs (English): retrieve, query, get me, give me, show me, "how much", \
+"what is my share". Signal verbs/phrases (Arabic — just as strong a signal as the English ones, do NOT \
+require an English verb to be present): عايز اعرف, عايز اشوف, هاتلي, وريني, ابعتلي, كام, قد ايه. \
+This is about reading back a stored fact, not judging whether something is correct/risky — an Arabic \
+question naming an item/price/quantity/tax/company is database_query exactly like its English \
+equivalent, never "other" just because it's phrased casually or in Arabic.
 - other: anything that isn't one of the above and isn't ambiguous between them — the user is asking \
 who/what the assistant is, asking something unrelated to tax/fraud/records, or asking a general tax \
 question not tied to their own stored records or a risk check. When genuinely unsure whether a vague \
@@ -89,6 +93,8 @@ Examples:
 - "Hello, is this company suspicious?" -> fraud_assessment (same reasoning — the greeting is just an opener)
 - "How much tax did taxpayer 1002 pay?" -> database_query (explicit retrieval verb)
 - "I want to know how much share I have in my company." -> database_query (a stored ownership fact, not a risk judgment)
+- "عايز اعرف سعر القطعة وكمية اللي اتباع منها في برايت فيوتشر" -> database_query (asking for a stored item price/quantity — NOT other, even with no English retrieval verb present)
+- "عايز اشوف ضرايبي في شركاتي" -> database_query (asking to see stored tax data)
 - "Is taxpayer 1002 suspicious?" -> fraud_assessment (explicit fraud verb)
 - "want to assess my company" / "check fraud" -> fraud_assessment (explicit fraud-assessment verb)
 - "عايز اعرف رأي سليم ولا محتاج أشوف متخصص يفحصه لي" -> fraud_assessment ("سليم"/"يفحصه" = a soundness/risk check, not a data lookup)
@@ -99,8 +105,18 @@ Examples:
 - "Who are you? What can you do?" -> other
 - "What's the weather like?" -> other
 
+If a "Previous question" is given below for context: a short follow-up that only makes sense as \
+continuing that same stored-data lookup (e.g. "what about the taxes" right after a question about sales \
+for a specific company) is still database_query — classify by what the conversation is actually about, \
+not just the new message in isolation. Only use the previous question to resolve an otherwise-ambiguous \
+follow-up like this; if the new message stands on its own or is clearly a different kind of request, \
+classify it normally and ignore the previous question.
+
 Respond only with the classification — do not answer the user's underlying question here."""
 
 
-def classify_intent(query: str) -> IntentResult:
-    return call_llm_structured(_SYSTEM_PROMPT, query, IntentResult)
+def classify_intent(query: str, previous_db_question: str | None = None) -> IntentResult:
+    user_prompt = query
+    if previous_db_question:
+        user_prompt = f'Previous question in this conversation (context only): "{previous_db_question}"\n\nNew message: {query}'
+    return call_llm_structured(_SYSTEM_PROMPT, user_prompt, IntentResult)

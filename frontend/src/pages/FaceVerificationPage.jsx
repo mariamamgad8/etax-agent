@@ -31,7 +31,7 @@ export function FaceVerificationPage() {
   const { auth, setSession, signOut } = useAuth();
   const { t } = useLanguage();
   const errorMessage = useErrorMessage();
-  const { videoRef, status: cameraStatus, start, captureFrame } = useCamera();
+  const { videoRef, status: cameraStatus, start, stop, captureFrame } = useCamera();
   const [stepIndex, setStepIndex] = React.useState(0);
   const [submitting, setSubmitting] = React.useState(false);
   const [failure, setFailure] = React.useState('');
@@ -42,8 +42,11 @@ export function FaceVerificationPage() {
 
   React.useEffect(() => {
     start();
-    return () => clearTimeout(pacingTimer.current);
-  }, [start]);
+    return () => {
+      clearTimeout(pacingTimer.current);
+      stop();
+    };
+  }, [start, stop]);
 
   const verify = async () => {
     setFailure('');
@@ -57,6 +60,11 @@ export function FaceVerificationPage() {
       clearTimeout(pacingTimer.current);
       setStepIndex(4);
       setDone(true);
+      // Release the camera the moment it's no longer needed, rather than
+      // waiting on this component's eventual unmount (up to 900ms later) —
+      // that gap was enough for the camera light to visibly stay on after
+      // "verified" showed and before /chat actually took over.
+      stop();
       setSession({ access_token: res.access_token, stage: res.stage, user: auth.user });
       setTimeout(() => navigate('/chat', { replace: true }), 900);
     } catch (err) {

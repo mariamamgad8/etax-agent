@@ -39,6 +39,28 @@ def pick_template(pool: list[str]) -> str:
     return random.choice(pool)
 
 
+# --- personalized session-start welcome (GET /chat/welcome) -----------------
+# Spoken + shown once, on entering the chat — not a graph turn, since it's
+# never a reply to a message. Uses the account's own full_name (never a
+# claim from the message/LLM) and the frontend's current UI-language choice
+# (a request param here, since UI language is a frontend-only concept with
+# no user message to detect it from — see i18n/LanguageContext.jsx).
+
+WELCOME_TEMPLATES: dict[str, list[str]] = {
+    "en": [
+        "Hi {name}, I'm your tax assistant. How can I help you today?",
+    ],
+    "ar": [
+        "أهلاً {name}، أنا مساعدك الضريبي. إزاي أقدر أساعدك النهاردة؟",
+    ],
+}
+
+
+def build_welcome_text(language: str, full_name: str) -> str:
+    pool = WELCOME_TEMPLATES.get(language, WELCOME_TEMPLATES["en"])
+    return pick_template(pool).format(name=full_name)
+
+
 GREETING_TEMPLATES: dict[str, list[str]] = {
     "en": [
         "Hi! I can look up tax and company records you're authorized to access, or run a "
@@ -113,46 +135,76 @@ MULTI_INTENT_TEMPLATES: dict[str, list[str]] = {
 }
 
 
-# --- fraud result text (see fraud/engine.py's tier/label vocabulary) --------
-
-FRAUD_TIER_NAMES = {
-    "en": {"Standard Assessment": "Standard Assessment", "Comprehensive Assessment": "Comprehensive Assessment"},
-    "ar": {"Standard Assessment": "التقييم القياسي", "Comprehensive Assessment": "التقييم الشامل"},
-}
-FRAUD_LABEL_NAMES = {
-    "en": {"Suspicious": "Suspicious", "Not suspicious": "Not suspicious"},
-    "ar": {"Suspicious": "مشتبه به", "Not suspicious": "غير مشتبه به"},
-}
+# --- fraud result text --------------------------------------------------
 
 
-def build_fraud_result_text(
-    language: str,
-    tier: str,
-    fields_provided: int,
-    fields_total: int,
-    label: str,
-    probability: float,
-    threshold: float,
-) -> str:
+def build_fraud_result_text(language: str, probability: float, threshold: float) -> str:
     """
-    Localizes the fraud-assessment result sentence. `tier`/`label` are the
-    fixed English tokens fraud/engine.py returns internally (its own
-    contract is untouched — see fraud/engine.py's STANDARD_TIER/
-    COMPREHENSIVE_TIER and predict()'s "label" field) — only the final
-    user-facing sentence is translated here.
+    Localizes the fraud-assessment result sentence — a risk score/percentage,
+    never the word "suspicious"/"fraud" (per explicit instruction: the model's
+    output is reported as a score, not an accusation). A score above
+    `threshold` means the record needs manual review, not that fraud is
+    confirmed.
     """
-    tier_name = FRAUD_TIER_NAMES[language][tier]
-    label_name = FRAUD_LABEL_NAMES[language][label]
     if language == "ar":
         return (
-            f"اكتمل {tier_name} بناءً على {fields_provided} من {fields_total} حقلًا — النتيجة: "
-            f"\"{label_name}\" (الدرجة {probability:.2f} من مقياس 0.00 إلى 1.00، حد المراجعة "
-            f"{threshold:.2f}). الدرجة الأعلى من حد المراجعة لا تؤكد وجود احتيال — يُرجى إحالة "
-            "الحالة للمراجعة اليدوية قبل اتخاذ أي إجراء."
+            f"درجة المخاطر: {probability:.0%} (حد المراجعة {threshold:.0%}). الدرجة الأعلى من حد "
+            "المراجعة تعني أن هناك على الأرجح خطأ يحتاج مراجعة — لا تؤكد وجود احتيال بشكل قاطع، "
+            "يُرجى إحالة الحالة للمراجعة اليدوية قبل اتخاذ أي إجراء."
         )
     return (
-        f"{tier_name} complete, based on {fields_provided} of {fields_total} fields provided — result: "
-        f"\"{label_name}\" (score {probability:.2f} on a 0.00-1.00 scale, review threshold {threshold:.2f}). "
-        "A score above the review threshold does not confirm fraud — refer the case for manual "
-        "review before taking any action."
+        f"Risk score: {probability:.0%} (review threshold {threshold:.0%}). A score above the "
+        "review threshold means there is likely something wrong with this record — it does not "
+        "confirm fraud on its own, so refer the case for manual review before taking any action."
     )
+
+
+NO_FRAUD_RECORD_TEMPLATES: dict[str, list[str]] = {
+    "en": [
+        "I couldn't find a tax record linked to your account, so I can't run a risk assessment "
+        "right now. This is usually set up when you sign up — please contact support if you "
+        "believe this is a mistake.",
+    ],
+    "ar": [
+        "معنديش سجل ضريبي مرتبط بحسابك، فمش هقدر أعمل تقييم مخاطر دلوقتي. ده بيتربط عادةً وقت "
+        "التسجيل — لو حاسس إن في خطأ، تواصل مع الدعم.",
+    ],
+}
+
+REVIEW_REQUESTED_TEMPLATES: dict[str, list[str]] = {
+    "en": [
+        "Got it — I've flagged those values and requested a review. The tax authority will check "
+        "them; you can ask me for your review status any time.",
+    ],
+    "ar": [
+        "تمام — أشرت على القيم دي وطلبت مراجعتها. مصلحة الضرائب هتراجعها، وتقدر تسألني عن حالة "
+        "المراجعة في أي وقت.",
+    ],
+}
+
+# review_status values live in app.database.tax_models.FRAUD_REVIEW_STATUSES.
+FRAUD_STATUS_PHRASES: dict[str, dict[str, str]] = {
+    "en": {
+        "pending": "has not been reviewed yet",
+        "requested_review": "is awaiting review — you requested one and it hasn't been completed yet",
+        "under_review": "is currently under review by the tax authority",
+        "reviewed": "has been reviewed and confirmed by the tax authority",
+    },
+    "ar": {
+        "pending": "لسه ماتمّتش مراجعته",
+        "requested_review": "في انتظار المراجعة — أنت طلبت مراجعة ولسه مامتراجعتش",
+        "under_review": "قيد المراجعة حالياً من مصلحة الضرائب",
+        "reviewed": "تمت مراجعته وتأكيده من مصلحة الضرائب",
+    },
+}
+
+
+def build_fraud_status_text(language: str, review_status: str | None) -> str:
+    if review_status is None:
+        return NO_FRAUD_RECORD_TEMPLATES[language][0]
+    phrase = FRAUD_STATUS_PHRASES.get(language, FRAUD_STATUS_PHRASES["en"]).get(
+        review_status, FRAUD_STATUS_PHRASES["en"][review_status]
+    )
+    if language == "ar":
+        return f"سجلك الضريبي {phrase}."
+    return f"Your tax record {phrase}."

@@ -90,6 +90,20 @@ def test_fraud_trigger_keyword_list_covers_the_reported_phrases():
         assert graph._contains_fraud_trigger(phrase), f"expected {phrase!r} to be a recognized fraud trigger"
 
 
+def test_arabic_transliterated_risk_score_reopens_the_fraud_flow_without_the_classifier(monkeypatch):
+    """
+    Regression test for a real reported bug: "مخاطر" (the Arabic word) was
+    already a trigger, but a user typing the English term "risk score" in
+    Arabic script ("الريسك سكور") is a different substring entirely and fell
+    through to the classifier, which read the (admittedly half-finished)
+    message as "other" instead of reopening the fraud review.
+    """
+    _fails_if_classifier_called(monkeypatch)
+    text = "هو معلش نسيت كان في خطا في البيانات فكنت عايز اعدل في بيانات الريسك سكور"
+    result = graph.route_intent({"normalized_query": text, "original_query": text})
+    assert result["intent"] == "fraud_assessment"
+
+
 # --- db-query override: a retrieval verb defers the ambiguous case to the LLM ---
 
 
@@ -101,7 +115,7 @@ def test_db_query_override_phrase_suppresses_the_keyword_preroute(monkeypatch):
         confidence = 0.8
         reasoning = "explicit retrieval verb present alongside an ambiguous fraud-adjacent word"
 
-    def fake_classify(query):
+    def fake_classify(query, previous_db_question=None):
         calls.append(query)
         return FakeResult()
 

@@ -15,17 +15,24 @@ This is intentionally the literal sample dataset supplied for this purpose
 reference), not invented/generated business records; real seed/import data
 replaces this separately.
 """
+import csv
 import logging
+import random
+from pathlib import Path
 
-from sqlalchemy import select, text
+from sqlalchemy import insert, select, text
 from sqlalchemy.orm import Session
 
 from app.auth.security import hash_password
+from app.chat.fraud.schema import NUMERIC_FIELD_ORDER
 from app.database.db import SessionLocal
 from app.database.models import FaceProfile, User
-from app.database.tax_models import Company, CompanyOwner, Item, Taxpayer, Transaction
+from app.database.tax_models import Company, CompanyOwner, FraudRecord, Item, Taxpayer, Transaction
 
 logger = logging.getLogger(__name__)
+
+_FRAUD_DATASET_CSV = Path(__file__).resolve().parents[1] / "fraud" / "data" / "fraud_dataset.csv"
+_FRAUD_CATEGORICAL_FIELDS = ["Business_Type", "Region", "Industry_Risk"]
 
 _COMPANIES = [
     (1, "Bright Future Academy", "educational"),
@@ -164,11 +171,77 @@ def _seed_demo_accounts(db: Session) -> None:
     logger.info("[SEED] created %d demo accounts linked to seeded taxpayers.", len(_DEMO_ACCOUNTS))
 
 
+def _generate_unique_claim_codes(n: int) -> list[str]:
+    """Random 9-digit codes (100000000-999999999, never leading-zero — see
+    app.database.tax_models.FraudRecord.claim_code), unique within this batch."""
+    codes: set[str] = set()
+    while len(codes) < n:
+        codes.add(str(random.randint(100_000_000, 999_999_999)))
+    return list(codes)
+
+
+def _seed_fraud_records(db: Session) -> None:
+    """
+    Loads the fraud-risk training dataset (Fraud label column already
+    dropped — see backend/app/chat/fraud/data/fraud_dataset.csv) into
+    tax.fraud_records, one row per dataset record, each given a random
+    9-digit claim_code generated fresh THIS run (never baked into the CSV) —
+    stable afterward since this whole step only ever runs once per database,
+    gated by the same per-section idempotency this module already uses.
+    """
+    if db.execute(select(FraudRecord.id).limit(1)).first() is not None:
+        return
+
+    with open(_FRAUD_DATASET_CSV, newline="", encoding="utf-8") as f:
+        csv_rows = list(csv.DictReader(f))
+
+    codes = _generate_unique_claim_codes(len(csv_rows))
+    rows = []
+    for csv_row, code in zip(csv_rows, codes):
+        row = {
+            "id": int(csv_row["Taxpayer_ID"]),
+            "claim_code": code,
+            "review_status": "pending",
+            **{field: csv_row[field] for field in _FRAUD_CATEGORICAL_FIELDS},
+            **{field: float(csv_row[field]) for field in NUMERIC_FIELD_ORDER},
+        }
+        rows.append(row)
+
+    db.execute(insert(FraudRecord), rows)
+    db.commit()
+    logger.info("[SEED] loaded %d fraud_records rows, each with a random 9-digit claim code.", len(rows))
+
+
+# (demo taxpayer_id, fraud_records.id) — the first three dataset rows
+# (Taxpayer_ID 100000/100001/100002), linked directly to Ahmed/Sara/Omar so
+# the DB-driven fraud_assessment flow can be exercised through the real demo
+# accounts without going through the public signup code flow (same reasoning
+# as _seed_demo_accounts: these are seeded accounts, never self-declared).
+_DEMO_FRAUD_LINKS = [(1, 100000), (2, 100001), (3, 100002)]
+
+
+def _link_demo_fraud_records(db: Session) -> None:
+    linked_any = False
+    for taxpayer_id, fraud_record_id in _DEMO_FRAUD_LINKS:
+        record = db.get(FraudRecord, fraud_record_id)
+        taxpayer = db.get(Taxpayer, taxpayer_id)
+        if record is None or taxpayer is None or taxpayer.user_id is None or record.user_id is not None:
+            continue
+        record.user_id = taxpayer.user_id
+        db.add(record)
+        linked_any = True
+    if linked_any:
+        db.commit()
+        logger.info("[SEED] linked demo accounts to their fraud_records rows.")
+
+
 def seed(db: Session) -> None:
     """Idempotent per-section (see module docstring) — safe to call repeatedly."""
     _seed_companies_transactions_items(db)
     _seed_taxpayers_and_ownership(db)
     _seed_demo_accounts(db)
+    _seed_fraud_records(db)
+    _link_demo_fraud_records(db)
 
 
 def ensure_ready() -> None:

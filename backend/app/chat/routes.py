@@ -6,18 +6,26 @@ from fastapi.concurrency import run_in_threadpool
 from pydantic import BaseModel, Field
 
 from app.auth.dependencies import require_authenticated
-from app.chat.fraud.extraction import extract_fraud_features
-from app.chat.fraud.validation import validate_fraud_features
 from app.chat.graph import resume_chat, run_chat
 from app.chat.providers.base import AllProvidersExhausted
 from app.chat.providers.stt import transcribe_audio
 from app.chat.providers.tts import synthesize_speech
-from app.chat.responses import detect_response_language
+from app.chat.responses import build_welcome_text
 from app.database.models import User
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/chat", tags=["chat"])
+
+# A fresh value every time this process starts — whether that's a full
+# `docker compose down && up` or just uvicorn's own --reload restarting the
+# worker on a code change, since either way the graph's InMemorySaver
+# checkpointer (not durable across a process restart — see graph.py) has
+# just as genuinely lost every thread's state. The frontend compares this
+# against what it last saved (see ChatPage.jsx's persisted chat history) and
+# discards a stale conversation rather than keep showing turns whose
+# thread_id no longer means anything on this server.
+_BOOT_ID = uuid.uuid4().hex
 
 
 class ChatMessageRequest(BaseModel):
@@ -31,11 +39,9 @@ class ChatMessageRequest(BaseModel):
 
 class AwaitingInput(BaseModel):
     type: str
-    fields: dict
-    errors: list[str]
-    schema_: dict = Field(alias="schema")
-
-    model_config = {"populate_by_name": True}
+    record_id: int
+    record: dict
+    review_status: str
 
 
 class TablePayload(BaseModel):
@@ -51,22 +57,17 @@ class ChatMessageResponse(BaseModel):
     table: TablePayload | None = None
 
 
+class WelcomeResponse(BaseModel):
+    text: str
+    boot_id: str
+
+
 class TranscribeResponse(BaseModel):
     text: str
 
 
 class SpeakRequest(BaseModel):
     text: str = Field(min_length=1, max_length=2000)
-
-
-class FraudExtractRequest(BaseModel):
-    text: str = Field(min_length=1, max_length=4000)
-    current_fields: dict = Field(default_factory=dict)
-
-
-class FraudExtractResponse(BaseModel):
-    fields: dict
-    errors: list[str]
 
 
 def _own_thread_id(user: User) -> str:
@@ -76,6 +77,21 @@ def _own_thread_id(user: User) -> str:
 def _check_thread_ownership(user: User, thread_id: str) -> None:
     if not thread_id.startswith(f"{user.id}:"):
         raise HTTPException(status.HTTP_403_FORBIDDEN, "That conversation does not belong to you.")
+
+
+@router.get("/welcome", response_model=WelcomeResponse)
+async def welcome(
+    language: str = "en",
+    user: User = Depends(require_authenticated),
+):
+    """
+    A personalized session-start greeting, by the account's own full_name —
+    never a chat turn (no thread_id, no graph run, nothing to reply to).
+    `language` is the frontend's current UI-language choice, not detected
+    from any message (there isn't one yet) — see responses.build_welcome_text.
+    """
+    text = build_welcome_text(language if language in ("en", "ar") else "en", user.full_name)
+    return WelcomeResponse(text=text, boot_id=_BOOT_ID)
 
 
 @router.post("/message", response_model=ChatMessageResponse)
@@ -103,9 +119,9 @@ async def send_message(
             intent=state.get("intent"),
             awaiting=AwaitingInput(
                 type=interrupt_payload["type"],
-                fields=interrupt_payload["fields"],
-                errors=interrupt_payload["errors"],
-                schema_=interrupt_payload["schema"],
+                record_id=interrupt_payload["record_id"],
+                record=interrupt_payload["record"],
+                review_status=interrupt_payload["review_status"],
             ),
         )
 
@@ -116,34 +132,6 @@ async def send_message(
         intent=state.get("intent"),
         table=TablePayload(**table_payload) if table_payload else None,
     )
-
-
-@router.post("/fraud/extract", response_model=FraudExtractResponse)
-async def fraud_extract(
-    payload: FraudExtractRequest,
-    user: User = Depends(require_authenticated),
-):
-    """
-    Lets the user type/paste more feature text into the chat while the fraud
-    form is showing, without submitting it yet — extracts values from the
-    text and merges them into the form's current values (a field the new
-    text doesn't mention keeps whatever value it already had; never
-    overwritten with null), so it "reflects in the menu" immediately. This
-    is intentionally stateless (no thread_id, doesn't touch the graph's
-    interrupt/resume checkpoint) — the actual submission still goes through
-    POST /chat/message's form_response path unchanged.
-    """
-    logger.info("[FRAUD] /chat/fraud/extract request from user_id=%s", user.id)
-    # This endpoint is stateless (no thread_id/graph state — see the docstring
-    # above), so unlike the graph's nodes it has no state["response_language"]
-    # to read; it detects directly from the text just submitted instead,
-    # using the same deterministic per-message logic route_intent uses.
-    language = detect_response_language(payload.text)
-    extracted = await run_in_threadpool(extract_fraud_features, payload.text)
-    new_values = extracted.model_dump(exclude_none=True)
-    merged = {**payload.current_fields, **new_values}
-    errors = validate_fraud_features(merged, language)
-    return FraudExtractResponse(fields=merged, errors=errors)
 
 
 @router.post("/transcribe", response_model=TranscribeResponse)

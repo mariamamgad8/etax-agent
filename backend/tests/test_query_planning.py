@@ -46,3 +46,37 @@ def test_only_ever_uses_known_field_and_metric_names():
 def test_wants_profile_info_true_for_identity_question():
     plan = extract_query_plan("what is my taxpayer id and which companies do I own")
     assert plan.wants_profile_info is True
+
+
+def test_wants_fraud_status_true_for_review_status_question():
+    plan = extract_query_plan("has my tax record been reviewed yet")
+    assert plan.wants_fraud_status is True
+
+
+def test_arabic_taxes_question_maps_to_taxes_field():
+    """
+    Regression test for a real reported bug: "عايز اشوف ضرايبي" ("I want to
+    see my taxes") returned an "unclear" database status — extract_query_plan
+    had zero Arabic examples for database_query at all, only for
+    fraud_assessment, so it mapped nothing even though "taxes" is directly in
+    the fixed vocabulary.
+    """
+    plan = extract_query_plan("عايز اشوف ضرايبي")
+    assert "taxes" in plan.fields
+
+
+def test_arabic_item_price_and_quantity_question_maps_to_the_right_fields():
+    plan = extract_query_plan("عايز اعرف سعر القطعة وكمية اللي اتباع منها في برايت فيوتشر")
+    assert {"item_price", "quantity"} <= set(plan.fields)
+    assert any("برايت" in m for m in plan.company_mentions)
+
+
+def test_avg_taxes_maps_to_the_average_taxes_metric():
+    """
+    Regression test for a real reported bug: this phrasing used to map to
+    NOTHING (no average_taxes metric existed), which authorize_plan then
+    misread as an ownership-summary question — see test_sql_security.py's
+    section 20 for the full failure story and the authorize_plan-level fix.
+    """
+    plan = extract_query_plan("get me the avg taxes between both of my companies")
+    assert "average_taxes" in plan.metrics

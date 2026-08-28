@@ -30,15 +30,11 @@ langgraph==1.2.11
 # explicitly now that app/chat/providers/tts.py calls it directly for the
 # ElevenLabs REST API (no ElevenLabs SDK dependency needed for one endpoint).
 httpx==0.28.1
-# Local/offline TTS (ONNX voice models, no network call, no rate limit) —
-# the second attempt in TTS_PROVIDER_ORDER, right after Gemini: unlike the
-# other providers a local model can't be rate-limited or slow-fail over the
-# network, so falling back to it is effectively instant. Reuses the
-# onnxruntime already installed for InsightFace. See providers/tts.py.
-piper-tts==1.7.0
-# Free, no-API-key TTS fallback (Microsoft Edge's online voices) — third
-# attempt, weaker on Arabic than Piper per live comparison. ElevenLabs stays
-# last (plan-restricted on this project's account).
+# Free, no-API-key TTS fallback (Microsoft Edge's online voices) — second
+# attempt, right after Gemini. Piper (local ONNX voices) was tried here but
+# removed after a live, reproducible ONNXRuntime crash on real input — see
+# providers/tts.py's module docstring. ElevenLabs stays last (plan-restricted
+# on this project's account).
 edge-tts==7.2.8
 
 # --- database_query: SQLDatabaseChain experiment + the LLM used for it ---

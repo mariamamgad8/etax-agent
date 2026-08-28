@@ -59,18 +59,15 @@ services:
       GROQ_LLM_MODELS: ${GROQ_LLM_MODELS:-openai/gpt-oss-20b,llama-3.1-8b-instant,llama-3.3-70b-versatile,openai/gpt-oss-120b}
       GEMINI_LLM_MODELS: ${GEMINI_LLM_MODELS:-gemini-flash-latest}
       SQL_CHAIN_MODEL: ${SQL_CHAIN_MODEL:-openai/gpt-oss-20b}
-      TTS_PROVIDER_ORDER: ${TTS_PROVIDER_ORDER:-gemini,piper,edge_tts,elevenlabs}
+      TTS_PROVIDER_ORDER: ${TTS_PROVIDER_ORDER:-gemini,edge_tts,elevenlabs}
       GEMINI_TTS_API_KEYS: ${GEMINI_TTS_API_KEYS:-}
       GEMINI_TTS_MODEL: ${GEMINI_TTS_MODEL:-gemini-2.5-flash-preview-tts}
       GEMINI_TTS_VOICE: ${GEMINI_TTS_VOICE:-Kore}
-      PIPER_VOICE_DIR: ${PIPER_VOICE_DIR:-/workspace/piper_voices}
-      PIPER_VOICE_EN: ${PIPER_VOICE_EN:-en_US-lessac-medium}
-      PIPER_VOICE_AR: ${PIPER_VOICE_AR:-ar_JO-kareem-medium}
       EDGE_TTS_VOICE_EN: ${EDGE_TTS_VOICE_EN:-en-US-AriaNeural}
       EDGE_TTS_VOICE_AR: ${EDGE_TTS_VOICE_AR:-ar-EG-SalmaNeural}
       ELEVENLABS_MODEL: ${ELEVENLABS_MODEL:-eleven_multilingual_v2}
       ELEVENLABS_VOICE_ID: ${ELEVENLABS_VOICE_ID:-}
-      MODEL_COOLDOWN_SECONDS: ${MODEL_COOLDOWN_SECONDS:-60}
+      MODEL_COOLDOWN_SECONDS: ${MODEL_COOLDOWN_SECONDS:-2}
     ports:
       - "8000:8000"
     volumes:

@@ -18,7 +18,6 @@ route_intent unit level and via two live run_chat calls.
 import uuid
 
 import app.chat.graph as graph
-from app.chat.fraud.validation import validate_fraud_features
 from app.chat.graph import run_chat
 from app.chat.responses import (
     LANGUAGE_NAMES,
@@ -143,6 +142,27 @@ def test_unauthorized_message_prompt_is_localized_for_english(monkeypatch):
     assert result["final_response"] == "You are not authorized."
 
 
+def test_unclear_db_status_uses_the_clarify_template_never_the_llm(monkeypatch):
+    """
+    "unclear" (authorize_plan captured nothing actionable) reuses the same
+    deterministic "which do you want" wording clarify_intent already uses —
+    more useful than a flat "couldn't understand", and needs no LLM call
+    since the wording never depends on the specific question.
+    """
+    def fail_if_called(system_prompt, user_prompt):
+        raise AssertionError("call_llm_text must not be called for the unclear db status")
+
+    monkeypatch.setattr(graph, "call_llm_text", fail_if_called)
+
+    state_en = {"original_query": "asdf", "response_language": "en", "sql_result": {"status": "unclear"}}
+    result_en = graph.db_response(state_en)
+    assert result_en["final_response"] in graph.CLARIFY_INTENT_TEMPLATES["en"]
+
+    state_ar = {"original_query": "asdf", "response_language": "ar", "sql_result": {"status": "unclear"}}
+    result_ar = graph.db_response(state_ar)
+    assert result_ar["final_response"] in graph.CLARIFY_INTENT_TEMPLATES["ar"]
+
+
 def test_no_result_message_prompt_uses_state_language_not_query_text(monkeypatch):
     """
     Regression guard: db_response must use state["response_language"], not
@@ -169,40 +189,20 @@ def test_no_result_message_prompt_uses_state_language_not_query_text(monkeypatch
 
 
 def test_fraud_result_text_localized_for_both_languages():
-    en_text = build_fraud_result_text("en", "Standard Assessment", 8, 23, "Suspicious", 0.42, 0.195)
-    assert "Standard Assessment" in en_text
-    assert "Suspicious" in en_text
+    en_text = build_fraud_result_text("en", 0.42, 0.195)
+    assert "42%" in en_text
+    assert "Risk score" in en_text
 
-    ar_text = build_fraud_result_text("ar", "Standard Assessment", 8, 23, "Suspicious", 0.42, 0.195)
-    assert "التقييم القياسي" in ar_text
-    assert "مشتبه به" in ar_text
-    assert "0.42" in ar_text
+    ar_text = build_fraud_result_text("ar", 0.42, 0.195)
+    assert "درجة المخاطر" in ar_text
+    assert "42%" in ar_text
 
 
 def test_fraud_response_node_uses_state_language():
-    state = {
-        "response_language": "ar",
-        "prediction_label": "Not suspicious",
-        "prediction_probability": 0.05,
-        "prediction_tier": "Comprehensive Assessment",
-        "fields_provided": 23,
-        "fields_total": 23,
-    }
+    state = {"response_language": "ar", "prediction_probability": 0.05}
     result = graph.fraud_response(state)
-    assert "غير مشتبه به" in result["final_response"]
-    assert "التقييم الشامل" in result["final_response"]
-
-
-def test_fraud_validation_errors_localized_arabic():
-    errors = validate_fraud_features({}, "ar")
-    assert len(errors) == 8  # all 8 required fields missing
-    assert all("مطلوب" in e for e in errors)
-    assert any("Net_Profit" in e for e in errors)  # field identifier stays as-is
-
-
-def test_fraud_validation_errors_default_to_english():
-    errors = validate_fraud_features({})
-    assert any("is required" in e for e in errors)
+    assert "درجة المخاطر" in result["final_response"]
+    assert "5%" in result["final_response"]
 
 
 def test_greeting_response_localized(monkeypatch):

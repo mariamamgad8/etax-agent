@@ -74,6 +74,43 @@ def test_route_intent_skips_classifier_for_pure_greeting(monkeypatch):
     assert result["response_language"] == "en"
 
 
+def test_route_intent_clears_a_stale_response_payload_from_a_previous_turn(monkeypatch):
+    """
+    Regression test for a real reported bug: once the frontend started
+    reusing one thread_id for the whole session (for database_query memory),
+    langgraph's checkpointer persists AgentState across turns — a branch
+    that never touches response_payload itself (fraud_response, the
+    templated greeting/other/clarify nodes) kept silently re-returning the
+    PREVIOUS turn's table forever. route_intent is the one node every turn
+    always passes through, so it's what must reset this.
+    """
+    stale_state = {
+        "normalized_query": "Hi",
+        "original_query": "Hi",
+        "response_payload": {"table": {"columns": ["Company Name"], "rows": [["Bright Future Academy"]]}},
+    }
+
+    def fail_if_called(*args, **kwargs):
+        raise AssertionError("classify_intent must not be called for an obvious pure greeting")
+
+    monkeypatch.setattr(graph, "classify_intent", fail_if_called)
+    result = graph.route_intent(stale_state)
+    assert result["response_payload"] == {}
+
+    # Same guarantee on the classifier path (a message that doesn't match
+    # any deterministic pre-router tier).
+    class FakeResult:
+        intent = "other"
+        confidence = 0.9
+        reasoning = "not a specific request"
+
+    monkeypatch.setattr(graph, "classify_intent", lambda *a, **k: FakeResult())
+    stale_state["normalized_query"] = "What's the weather like?"
+    stale_state["original_query"] = "What's the weather like?"
+    result2 = graph.route_intent(stale_state)
+    assert result2["response_payload"] == {}
+
+
 def test_route_intent_still_calls_classifier_for_compound_message(monkeypatch):
     calls = []
 
@@ -82,7 +119,7 @@ def test_route_intent_still_calls_classifier_for_compound_message(monkeypatch):
         confidence = 0.9
         reasoning = "explicit retrieval request follows the greeting"
 
-    def fake_classify(query):
+    def fake_classify(query, previous_db_question=None):
         calls.append(query)
         return FakeResult()
 
@@ -166,3 +203,14 @@ def test_classifier_handles_greeting_and_compound_message_live():
 
     compound_result = classify_intent("Hi, show me my company's taxes.")
     assert compound_result.intent == "database_query"
+
+
+def test_classifier_handles_arabic_item_price_question_live():
+    """
+    Regression test for a real reported bug: this exact Arabic phrasing (item
+    price/quantity, no English retrieval verb) was classified as "other" —
+    the system prompt had rich Arabic examples for fraud_assessment but none
+    at all for database_query.
+    """
+    result = classify_intent("عايز اعرف سعر القطعة واتباع منها قد ايه في برايت فيوتشر")
+    assert result.intent == "database_query"

@@ -145,10 +145,11 @@ def make_scenario(db, unique_suffix):
         db.commit()
 
 
-def _plan(company_mentions=None, wants_profile_info=False, fields=None, metrics=None) -> QueryPlan:
+def _plan(company_mentions=None, wants_profile_info=False, wants_fraud_status=False, fields=None, metrics=None) -> QueryPlan:
     return QueryPlan(
         company_mentions=company_mentions or [],
         wants_profile_info=wants_profile_info,
+        wants_fraud_status=wants_fraud_status,
         fields=fields or [],
         metrics=metrics or [],
     )
@@ -191,16 +192,22 @@ def _company(company_id=1, name="TestCo", activity="test", share=0.6):
 # --- 1. no-owner user causes zero LLM calls of any kind -----------------------
 
 
-def test_no_owner_never_calls_any_llm(make_scenario, monkeypatch):
+def test_no_owner_never_calls_the_sql_generating_llm(make_scenario, monkeypatch):
+    """
+    A user with no company ownership can still legitimately ask about their
+    fraud_review_status (see section 19 below — that link is independent of
+    ownership entirely), so query PLANNING now always runs. What must still
+    never happen for a no-ownership user is reaching SQL GENERATION/
+    execution — there's nothing authorized to query. extract_query_plan is
+    mocked here (not live) purely to keep this test fast/deterministic, per
+    this file's existing convention.
+    """
     scenario = make_scenario({})  # no companies at all
-
-    def fail_plan(question_en):
-        raise AssertionError("extract_query_plan must not be called with no ownership")
+    monkeypatch.setattr(sql_runner, "extract_query_plan", _fake_plan(_plan(fields=["company_name"])))
 
     def fail_sql(system, user):
-        raise AssertionError("call_llm_text must not be called with no ownership")
+        raise AssertionError("call_llm_text (SQL generation) must not be called with no ownership")
 
-    monkeypatch.setattr(sql_runner, "extract_query_plan", fail_plan)
     monkeypatch.setattr(sql_runner, "call_llm_text", fail_sql)
 
     result = handle_user_database_query(scenario.user_id, "show me my companies", scenario.db.connection())
@@ -390,6 +397,196 @@ def test_direct_answer_for_which_companies_are_majority_never_calls_sql_llm(make
     result = handle_user_database_query(scenario.user_id, "which companies do I own", scenario.db.connection())
 
     assert result["status"] == "direct_answer"
+
+
+# --- 20. an empty plan (nothing mapped to the fixed vocabulary) is "unclear",
+# never silently misread as an ownership-summary question -------------------
+# Regression test for a real reported bug: "get me the avg taxes between both
+# of my companies" returned the ownership table (and an "I don't have any tax
+# information" message) instead of either computing the average or admitting
+# it didn't understand — caused by `all(f in OWNERSHIP_FIELDS for f in [])`
+# being vacuously True when extract_query_plan mapped nothing at all (there
+# was no average_taxes metric yet for "avg taxes" to match).
+
+
+def test_authorize_plan_with_nothing_extracted_is_unclear_not_direct_answer():
+    plan = _plan()  # no fields, no metrics, wants_profile_info=False, wants_fraud_status=False
+    context = {"taxpayer_id": 1, "taxpayer_name": "X", "companies": [{"company_id": 1, "company_name": "Y", "company_activity": None, "share": 0.6, "access_level": "majority"}], "fraud_review_status": None}
+
+    decision = authorize_plan(plan, context)
+
+    assert decision == {"decision": "unclear"}
+
+
+def test_handle_user_database_query_reports_unclear_never_the_ownership_table(make_scenario, monkeypatch):
+    scenario = make_scenario({"Bright Future Academy": 0.6, "City Medical Center": 0.3})
+    monkeypatch.setattr(sql_runner, "extract_query_plan", _fake_plan(_plan()))  # nothing mapped
+
+    def fail_sql(system, user):
+        raise AssertionError("call_llm_text must not be called for an unclear plan")
+
+    monkeypatch.setattr(sql_runner, "call_llm_text", fail_sql)
+
+    result = handle_user_database_query(
+        scenario.user_id, "get me the avg taxes between both of my companies", scenario.db.connection()
+    )
+
+    assert result["status"] == "unclear"
+
+
+def test_average_taxes_metric_resolves_to_proceed_across_mixed_tiers(make_scenario, monkeypatch):
+    """
+    The actual fix for the reported query: average_taxes now exists in the
+    METRICS vocabulary (min_access="any", same as total_taxes/taxes), so a
+    portfolio-wide request spanning one majority and one minority company
+    reaches SQL generation instead of falling back to anything else.
+    """
+    scenario = make_scenario({"Bright Future Academy": 0.6, "City Medical Center": 0.3})
+    monkeypatch.setattr(sql_runner, "extract_query_plan", _fake_plan(_plan(metrics=["average_taxes"])))
+    monkeypatch.setattr(sql_runner, "call_llm_text", _fake_llm("SELECT AVG(taxes) AS average_taxes FROM tax.v_majority_transactions"))
+
+    result = handle_user_database_query(scenario.user_id, "avg taxes between both my companies", scenario.db.connection())
+
+    assert result["status"] in ("success", "empty_result")
+
+
+# --- 21. a company implicitly dropped from a portfolio-wide request is
+# surfaced back to the user, never silently answered as if it didn't exist --
+# Regression test for a real reported bug: "items, prices, and ids for both
+# companies" correctly (and securely) scoped down to just the majority
+# company, but the user was never told the minority company was excluded —
+# they just got Bright Future's items with no explanation.
+
+
+def test_authorize_plan_reports_excluded_companies_when_implicit_scope_narrows(make_scenario):
+    scenario = make_scenario({"MajCo": 0.9, "MinCo": 0.2})
+    context = {
+        "taxpayer_id": scenario.taxpayer_id,
+        "taxpayer_name": "X",
+        "companies": [
+            {"company_id": scenario.companies["MajCo"]["id"], "company_name": "MajCo", "company_activity": None, "share": 0.9, "access_level": "majority"},
+            {"company_id": scenario.companies["MinCo"]["id"], "company_name": "MinCo", "company_activity": None, "share": 0.2, "access_level": "minority"},
+        ],
+        "fraud_review_status": None,
+    }
+    plan = _plan(fields=["item_id", "item_price"])  # majority-only fields, no company named
+
+    decision = authorize_plan(plan, context)
+
+    assert decision["decision"] == "proceed"
+    assert [c["company_name"] for c in decision["companies"]] == ["MajCo"]
+    assert [c["company_name"] for c in decision["excluded_companies"]] == ["MinCo"]
+
+
+def test_explicit_target_proceed_has_empty_excluded_companies(make_scenario):
+    """Excluding is only ever an IMPLICIT (no-company-named) narrowing effect — an explicitly forbidden company is its own immediate forbidden_field decision, never silently dropped."""
+    scenario = make_scenario({"MajCo": 0.9})
+    context = {
+        "taxpayer_id": scenario.taxpayer_id,
+        "taxpayer_name": "X",
+        "companies": [{"company_id": scenario.companies["MajCo"]["id"], "company_name": "MajCo", "company_activity": None, "share": 0.9, "access_level": "majority"}],
+        "fraud_review_status": None,
+    }
+    plan = _plan(company_mentions=["MajCo"], fields=["item_id"])
+
+    decision = authorize_plan(plan, context)
+
+    assert decision["decision"] == "proceed"
+    assert decision["excluded_companies"] == []
+
+
+def test_handle_user_database_query_surfaces_excluded_companies_in_detail(make_scenario, monkeypatch):
+    scenario = make_scenario({"MajCo": 0.9, "MinCo": 0.2}, with_items=True)
+    monkeypatch.setattr(sql_runner, "extract_query_plan", _fake_plan(_plan(fields=["item_id", "item_price"])))
+    monkeypatch.setattr(
+        sql_runner,
+        "call_llm_text",
+        _fake_llm(f"SELECT item_id, item_price FROM tax.v_majority_items WHERE company_id IN ({scenario.companies['MajCo']['id']})"),
+    )
+
+    result = handle_user_database_query(scenario.user_id, "items and prices for both companies", scenario.db.connection())
+
+    assert result["status"] == "success"
+    excluded = result["detail"]["excluded_companies"]
+    assert len(excluded) == 1
+    assert excluded[0].startswith("MinCo")
+    assert not excluded[0].startswith("MajCo")
+
+
+# --- 22. derived (computed) fields are given their exact formula, never left
+# for the summarization LLM to eyeball a percentage from raw numbers --------
+# Regression test for a real reported bug: "percentage of tax per sale" was
+# answered differently in English (LLM computed 15% itself, correctly) vs.
+# Arabic (LLM just restated the raw numbers) — the SAME question, two
+# different behaviors, because nothing SQL-grounded ever computed the ratio.
+
+
+def test_sql_generation_prompt_lists_tax_rate_as_a_derived_expression_not_a_column():
+    prompt = sql_runner._sql_generation_prompt({"v_majority_transactions"}, [{"company_id": 1, "company_name": "X", "access_level": "majority"}], ["tax_rate"], [])
+    assert "taxes / NULLIF(sales, 0)" in prompt
+    assert "Requested raw fields (literal columns on the views above): (none)" in prompt  # never listed as a literal column
+
+
+def test_sql_generation_prompt_requires_company_name_for_multi_company_requests():
+    companies = [{"company_id": 1, "company_name": "A", "access_level": "majority"}, {"company_id": 2, "company_name": "B", "access_level": "majority"}]
+    prompt = sql_runner._sql_generation_prompt({"v_majority_transactions"}, companies, ["taxes"], [])
+    assert "MUST include company_name" in prompt
+
+
+def test_sql_generation_prompt_does_not_force_company_name_for_a_single_company():
+    companies = [{"company_id": 1, "company_name": "A", "access_level": "majority"}]
+    prompt = sql_runner._sql_generation_prompt({"v_majority_transactions"}, companies, ["taxes"], [])
+    assert "MUST include company_name" not in prompt
+
+
+# --- 23. min/max aggregate metrics exist (a real reported gap: "minimum
+# sale transaction" / "max tax" both failed with no matching metric) --------
+
+
+def test_min_max_metrics_are_registered_with_correct_access_levels():
+    assert METRICS["min_sale"]["min_access"] == "majority"
+    assert METRICS["max_sale"]["min_access"] == "majority"
+    assert METRICS["min_tax"]["min_access"] == "any"
+    assert METRICS["max_tax"]["min_access"] == "any"
+
+
+# --- 24. NUMERIC aggregate results are rounded, never shown with Postgres's
+# full internal scale -------------------------------------------------------
+# Regression test for a real reported bug: AVG(taxes) on a NUMERIC(12,2)
+# column came back as "262.5000000000000000" (Postgres's AVG() widens the
+# scale well past the source data's own precision) and was shown to the user
+# completely unrounded.
+
+
+def test_round_numeric_rounds_decimals_to_2dp_and_passes_through_everything_else():
+    import decimal
+
+    assert sql_runner._round_numeric(decimal.Decimal("262.5000000000000000")) == 262.5
+    assert sql_runner._round_numeric(decimal.Decimal("2500.00")) == 2500.0
+    assert sql_runner._round_numeric("Bright Future Academy") == "Bright Future Academy"
+    assert sql_runner._round_numeric(101) == 101
+    assert sql_runner._round_numeric(None) is None
+
+
+def test_average_taxes_result_is_rounded_end_to_end(make_scenario, monkeypatch):
+    scenario = make_scenario({"MajCo": 0.9, "MinCo": 0.2})
+    monkeypatch.setattr(sql_runner, "extract_query_plan", _fake_plan(_plan(metrics=["average_taxes"])))
+    monkeypatch.setattr(
+        sql_runner,
+        "call_llm_text",
+        _fake_llm(
+            f"SELECT AVG(taxes) AS average_taxes FROM tax.v_majority_transactions WHERE company_id IN ({scenario.companies['MajCo']['id']})"
+        ),
+    )
+
+    result = handle_user_database_query(scenario.user_id, "average taxes", scenario.db.connection())
+
+    assert result["status"] in ("success", "empty_result")
+    if result["rows"]:
+        value = result["rows"][0]["average_taxes"]
+        # Never more than 2 decimal places worth of precision — a Decimal
+        # with 16+ trailing zeros would fail this (str would show them).
+        assert len(str(value).split(".")[-1]) <= 2
 
 
 def test_direct_answer_rows_reflect_real_access_levels(make_scenario, monkeypatch):
@@ -778,3 +975,31 @@ def test_majority_transactions_view_never_duplicates_sales_per_item(make_scenari
         ).fetchall()
 
     assert len(rows) == 1  # one transaction row, not one per item
+
+
+# --- 19. fraud review status is a direct user_id link, not company-scoped ---
+# tax.fraud_records.user_id is independent of tax.taxpayers/company_owners
+# entirely (see FraudRecord's docstring) — a plain user with ZERO company
+# ownership must still be able to ask about it, so this is checked before
+# the "no company ownership" gate, not after.
+
+
+def test_authorize_plan_fraud_status_short_circuits_before_company_resolution():
+    plan = _plan(wants_fraud_status=True)
+    context = {"taxpayer_id": None, "taxpayer_name": None, "companies": [], "fraud_review_status": "under_review"}
+
+    decision = authorize_plan(plan, context)
+
+    assert decision == {"decision": "fraud_status", "review_status": "under_review"}
+
+
+def test_handle_user_database_query_answers_fraud_status_even_with_zero_company_ownership(make_scenario, monkeypatch):
+    scenario = make_scenario({})  # a taxpayer with no companies at all
+    monkeypatch.setattr(sql_runner, "extract_query_plan", _fake_plan(_plan(wants_fraud_status=True)))
+
+    result = handle_user_database_query(scenario.user_id, "has my tax record been reviewed", scenario.db)
+
+    assert result["status"] == "fraud_status"
+    assert result["sql"] is None
+    # This ad-hoc test user has no linked tax.fraud_records row at all.
+    assert result["detail"]["review_status"] is None

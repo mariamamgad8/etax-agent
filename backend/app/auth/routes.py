@@ -8,6 +8,7 @@ from app.auth.security import create_token, hash_password, verify_password
 from app.config import FACE_ENROLLMENT_TOKEN_TTL_MINUTES, FACE_VERIFICATION_TOKEN_TTL_MINUTES
 from app.database.db import get_db
 from app.database.models import User
+from app.database.tax_models import FraudRecord
 
 logger = logging.getLogger(__name__)
 
@@ -28,10 +29,18 @@ def _user_out(user: User) -> schemas.UserOut:
 @router.post("/signup", response_model=schemas.AuthStageResponse, status_code=status.HTTP_201_CREATED)
 def signup(payload: schemas.SignupRequest, db: Session = Depends(get_db)):
     logger.info(f" SIGNUP REQUEST: username={payload.username}, email={payload.email}")
-    
+
     if service.username_or_email_taken(db, payload.username, payload.email):
         logger.warning(f"SIGNUP FAILED: username or email already taken - {payload.username}")
         raise HTTPException(status.HTTP_409_CONFLICT, "That username or email is already registered.")
+
+    fraud_record = db.query(FraudRecord).filter(FraudRecord.claim_code == payload.tax_record_code).one_or_none()
+    if fraud_record is None:
+        logger.warning(f"SIGNUP FAILED: unknown tax_record_code for username={payload.username}")
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "That tax record code isn't recognized.")
+    if fraud_record.user_id is not None:
+        logger.warning(f"SIGNUP FAILED: tax_record_code already linked - username={payload.username}")
+        raise HTTPException(status.HTTP_409_CONFLICT, "That tax record code is already linked to another account.")
 
     user = User(
         full_name=payload.full_name.strip(),
@@ -40,10 +49,14 @@ def signup(payload: schemas.SignupRequest, db: Session = Depends(get_db)):
         password_hash=hash_password(payload.password),
     )
     db.add(user)
+    db.flush()
+
+    fraud_record.user_id = user.id
+    db.add(fraud_record)
     db.commit()
     db.refresh(user)
-    
-    logger.info(f" USER CREATED: id={user.id}, username={user.username}")
+
+    logger.info(f" USER CREATED: id={user.id}, username={user.username}, linked fraud_record_id={fraud_record.id}")
 
     token = create_token(str(user.id), "pending_enrollment", FACE_ENROLLMENT_TOKEN_TTL_MINUTES)
     logger.info(f" TOKEN ISSUED: user_id={user.id}, stage=pending_enrollment")

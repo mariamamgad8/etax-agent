@@ -39,6 +39,20 @@ def get_user_ownership_status(db_conn: Connection, user_id: uuid.UUID) -> dict:
     }
 
 
+_FRAUD_STATUS_QUERY = "SELECT review_status FROM tax.fraud_records WHERE user_id = :user_id"
+
+
+def get_user_fraud_status(db_conn: Connection, user_id: uuid.UUID) -> str | None:
+    """
+    review_status of the user's linked tax.fraud_records row, or None if
+    they have no linked record. Independent of tax.taxpayers/company_owners
+    — see FraudRecord's docstring: this is a separate, direct user_id link,
+    not tied to ownership tier at all.
+    """
+    row = db_conn.execute(text(_FRAUD_STATUS_QUERY), {"user_id": str(user_id)}).first()
+    return row.review_status if row else None
+
+
 _BUSINESS_CONTEXT_QUERY = """
 SELECT
     tp.id AS taxpayer_id,
@@ -70,15 +84,22 @@ def get_user_business_context(db_conn: Connection, user_id: uuid.UUID) -> dict:
              "share": float, "access_level": "majority" | "minority"},
             ...
         ],
+        "fraud_review_status": str | None,   # see get_user_fraud_status — independent of ownership
     }
     A taxpayer with no company_owners rows at all gets an empty "companies"
     list (the LEFT JOINs still return the taxpayer's own row with NULL
     company columns, filtered out below) rather than no row at all.
     """
     rows = db_conn.execute(text(_BUSINESS_CONTEXT_QUERY), {"user_id": str(user_id)}).fetchall()
+    fraud_review_status = get_user_fraud_status(db_conn, user_id)
 
     if not rows:
-        return {"taxpayer_id": None, "taxpayer_name": None, "companies": []}
+        return {
+            "taxpayer_id": None,
+            "taxpayer_name": None,
+            "companies": [],
+            "fraud_review_status": fraud_review_status,
+        }
 
     taxpayer_id = rows[0].taxpayer_id
     taxpayer_name = rows[0].taxpayer_name
@@ -94,4 +115,9 @@ def get_user_business_context(db_conn: Connection, user_id: uuid.UUID) -> dict:
         if row.company_id is not None
     ]
 
-    return {"taxpayer_id": taxpayer_id, "taxpayer_name": taxpayer_name, "companies": companies}
+    return {
+        "taxpayer_id": taxpayer_id,
+        "taxpayer_name": taxpayer_name,
+        "companies": companies,
+        "fraud_review_status": fraud_review_status,
+    }

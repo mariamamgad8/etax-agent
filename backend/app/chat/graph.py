@@ -27,19 +27,8 @@ from langgraph.graph import END, StateGraph
 from langgraph.types import Command, interrupt
 
 from app.chat.fraud.engine import predict as predict_fraud_model
-from app.chat.fraud.extraction import extract_fraud_features
-from app.chat.fraud.schema import (
-    ALL_FIELDS,
-    BUSINESS_TYPE_OPTIONS,
-    CORE_REQUIRED_FIELDS,
-    FRAUD_THRESHOLD,
-    INDUSTRY_RISK_OPTIONS,
-    INT_FIELDS,
-    NUMERIC_FIELD_ORDER,
-    OPTIONAL_FIELDS,
-    REGION_OPTIONS,
-)
-from app.chat.fraud.validation import validate_fraud_features
+from app.chat.fraud.records import get_user_fraud_record, record_to_fields, request_review
+from app.chat.fraud.schema import ALL_FIELDS, FRAUD_THRESHOLD
 from app.chat.intent import INTENT_ROUTING, classify_intent
 from app.chat.providers.llm import call_llm_text
 from app.chat.responses import (
@@ -47,14 +36,19 @@ from app.chat.responses import (
     GREETING_TEMPLATES,
     LANGUAGE_NAMES,
     MULTI_INTENT_TEMPLATES,
+    NO_FRAUD_RECORD_TEMPLATES,
     OTHER_TEMPLATES,
+    REVIEW_REQUESTED_TEMPLATES,
     build_fraud_result_text,
+    build_fraud_status_text,
     detect_response_language,
     pick_template,
 )
 from app.chat.services.sql_runner import handle_user_database_query
 from app.chat.state import AgentState
+from app.database.db import SessionLocal
 from app.database.db import engine as owner_engine
+from app.database.tax_models import FraudRecord
 
 logger = logging.getLogger(__name__)
 
@@ -125,6 +119,12 @@ def _looks_like_fraud_field_dump(text: str) -> bool:
 _FRAUD_TRIGGER_PHRASES = [
     "سليم", "اوراق", "أوراق", "ورق الشركة", "فحص", "تهرب ضريبي",
     "اتاكد من اوراقي", "أتأكد من أوراقي", "مشتبه", "احتيال", "مخاطر",
+    # Arabic-script transliteration of "risk score" — a real reported miss:
+    # "مخاطر" (the Arabic word) was already covered, but a user typing the
+    # English term in Arabic letters ("الريسك سكور") isn't the same substring
+    # and fell through to the classifier, which read a half-finished
+    # self-corrected sentence as "other" instead of reopening the review.
+    "ريسك سكور", "ريسك",
     "detect", "sus", "check", "assess", "assessment", "fraud", "suspicious", "risk",
 ]
 _DB_QUERY_OVERRIDE_PHRASES = ["retrieve", "query", "get me", "give me", "show me"]
@@ -143,6 +143,17 @@ def _contains_db_query_override(text: str) -> bool:
 def route_intent(state: AgentState) -> AgentState:
     query = state["normalized_query"]
 
+    # Both return paths below also reset response_payload to {} — this is
+    # the ONE node every turn always passes through, so it's the right place
+    # to clear a stale table from a PREVIOUS turn. Now that the frontend
+    # reuses one thread_id for the whole session (see ChatPage.jsx's
+    # threadId state, for database_query memory), the checkpointer persists
+    # AgentState across turns; a branch that never touches response_payload
+    # itself (fraud_response, the templated greeting/other/clarify nodes)
+    # would otherwise silently keep re-returning the LAST turn's table
+    # forever — confirmed live: a fraud risk-score reply kept showing the
+    # previous turn's company-ownership table underneath it.
+
     # The one and only per-turn language detection — every response-producing
     # node below reads state["response_language"] instead of recomputing it,
     # so a single turn can never answer in two different languages even
@@ -157,7 +168,7 @@ def route_intent(state: AgentState) -> AgentState:
             "[INTENT] %r -> intent=%s confidence=1.00 language=%s (deterministic pre-router: %s, classifier skipped)",
             query, intent, response_language, reason,
         )
-        return {**state, "intent": intent, "intent_confidence": 1.0, "response_language": response_language}
+        return {**state, "intent": intent, "intent_confidence": 1.0, "response_language": response_language, "response_payload": {}}
 
     # Deterministic fast paths — see the two tiers documented above. Order
     # matters: an obvious greeting never needs a classifier call at all (only
@@ -172,7 +183,7 @@ def route_intent(state: AgentState) -> AgentState:
     if _contains_fraud_trigger(query) and not _contains_db_query_override(query):
         return _deterministic("fraud_assessment", "fraud-leaning keyword")
 
-    result = classify_intent(query)
+    result = classify_intent(query, state.get("last_db_question_en"))
     logger.info(
         "[INTENT] %r -> intent=%s confidence=%.2f language=%s reasoning=%s",
         query,
@@ -186,103 +197,106 @@ def route_intent(state: AgentState) -> AgentState:
         "intent": result.intent,
         "intent_confidence": result.confidence,
         "response_language": response_language,
+        "response_payload": {},
     }
 
 
 # --- fraud_assessment branch -------------------------------------------------
+# load_fraud_record -> (no linked record) -> fraud_no_record_response
+#                    -> review_form [interrupt: shows the linked DB record
+#                       read-only] -> handle_fraud_review_action
+#                          -> (user confirmed) -> predict_fraud -> fraud_response
+#                          -> (user flagged fields) -> flagged_review_response
+# Every field always comes from the user's own tax.fraud_records row (linked
+# at signup via a 9-digit claim code — see app.auth.routes.signup), never
+# typed/pasted into the chat.
 
 
-def extract_fraud_fields(state: AgentState) -> AgentState:
-    features = extract_fraud_features(state["normalized_query"])
-    extracted = features.model_dump(exclude_none=True)
-    logger.info("[FRAUD] extracted fields from message: %s", extracted)
-    return {**state, "extracted_features": extracted}
+def load_fraud_record(state: AgentState) -> AgentState:
+    db = SessionLocal()
+    try:
+        record = get_user_fraud_record(db, uuid.UUID(state["user_id"]))
+    finally:
+        db.close()
+
+    if record is None:
+        logger.warning("[FRAUD] no linked fraud_records row for user_id=%s", state["user_id"])
+        return {**state, "fraud_record_missing": True}
+
+    return {
+        **state,
+        "fraud_record_missing": False,
+        "fraud_record_id": record.id,
+        "fraud_record_fields": record_to_fields(record),
+        "fraud_review_status": record.review_status,
+    }
 
 
-_FRAUD_FORM_SCHEMA = {
-    "numeric_fields": NUMERIC_FIELD_ORDER,
-    "integer_fields": INT_FIELDS,
-    "categorical_fields": {
-        "Business_Type": BUSINESS_TYPE_OPTIONS,
-        "Region": REGION_OPTIONS,
-        "Industry_Risk": INDUSTRY_RISK_OPTIONS,
-    },
-    # Drives the frontend's two-tier layout (required "standard assessment"
-    # section vs. optional "comprehensive assessment" section) — never
-    # exposed to the user as "8-feature"/"23-feature", just which fields are
-    # required vs. optional.
-    "required_fields": CORE_REQUIRED_FIELDS,
-    "optional_fields": OPTIONAL_FIELDS,
-}
+def _fraud_record_found(state: AgentState) -> str:
+    return "fraud_no_record_response" if state.get("fraud_record_missing") else "review_form"
+
+
+def fraud_no_record_response(state: AgentState) -> AgentState:
+    language = state.get("response_language", "en")
+    return {**state, "final_response": pick_template(NO_FRAUD_RECORD_TEMPLATES[language])}
 
 
 def review_form(state: AgentState) -> AgentState:
     """
-    Always shown, even if extraction already filled every field — the user
-    reviews/corrects before anything runs. Interrupting here pauses the graph
-    (state is checkpointed) until the caller resumes with Command(resume=...).
-    On a validation-failure loop-back, this re-shows the last submitted
-    values plus the errors, not the original extraction.
+    Shows the linked record's values read-only and pauses the graph (state is
+    checkpointed) until the caller resumes with Command(resume=...). The
+    resume value is either {"action": "confirm"} (run the risk assessment as
+    stored) or {"action": "flag", "fields": [...]} (the user believes some of
+    these values are wrong — never edited in place here, just flagged for the
+    tax authority to review; see FraudRecord's docstring for why).
     """
-    prefill = state.get("confirmed_features") or state.get("extracted_features") or {}
     submitted = interrupt(
         {
-            "type": "fraud_form",
-            "fields": prefill,
-            "errors": state.get("fraud_validation_errors") or [],
-            "schema": _FRAUD_FORM_SCHEMA,
+            "type": "fraud_review",
+            "record_id": state["fraud_record_id"],
+            "record": state["fraud_record_fields"],
+            "review_status": state["fraud_review_status"],
         }
     )
-    return {**state, "confirmed_features": submitted}
+    return {**state, "fraud_review_action": submitted}
 
 
-def validate_fraud_form(state: AgentState) -> AgentState:
+def handle_fraud_review_action(state: AgentState) -> AgentState:
+    action = state.get("fraud_review_action") or {}
+    if action.get("action") == "flag":
+        db = SessionLocal()
+        try:
+            record = db.get(FraudRecord, state["fraud_record_id"])
+            request_review(db, record, action.get("fields") or [])
+        finally:
+            db.close()
+        logger.info("[FRAUD] user_id=%s flagged fields for review: %s", state["user_id"], action.get("fields"))
+        return {**state, "fraud_flagged": True}
+    return {**state, "fraud_flagged": False}
+
+
+def _fraud_action_router(state: AgentState) -> str:
+    return "flagged_review_response" if state.get("fraud_flagged") else "predict_fraud"
+
+
+def flagged_review_response(state: AgentState) -> AgentState:
     language = state.get("response_language", "en")
-    errors = validate_fraud_features(state.get("confirmed_features") or {}, language)
-    if errors:
-        logger.info("[FRAUD] form validation failed, looping back to review_form: %s", errors)
-    else:
-        logger.info("[FRAUD] form validation passed")
-    return {**state, "fraud_validation_errors": errors}
+    return {**state, "final_response": pick_template(REVIEW_REQUESTED_TEMPLATES[language])}
 
 
 def predict_fraud(state: AgentState) -> AgentState:
-    result = predict_fraud_model(state["confirmed_features"])
+    result = predict_fraud_model(state["fraud_record_fields"])
     logger.info(
-        "[FRAUD] prediction: label=%s probability=%.4f tier=%s fields=%d/%d threshold=%.3f",
-        result["label"],
-        result["probability"],
-        result["tier"],
-        result["fields_provided"],
-        result["fields_total"],
-        FRAUD_THRESHOLD,
+        "[FRAUD] prediction: probability=%.4f threshold=%.3f is_high_risk=%s",
+        result["probability"], FRAUD_THRESHOLD, result["is_high_risk"],
     )
-    return {
-        **state,
-        "prediction_label": result["label"],
-        "prediction_probability": result["probability"],
-        "prediction_tier": result["tier"],
-        "fields_provided": result["fields_provided"],
-        "fields_total": result["fields_total"],
-    }
+    return {**state, "prediction_probability": result["probability"]}
 
 
 def fraud_response(state: AgentState) -> AgentState:
     language = state.get("response_language", "en")
-    text = build_fraud_result_text(
-        language,
-        state["prediction_tier"],
-        state["fields_provided"],
-        state["fields_total"],
-        state["prediction_label"],
-        state["prediction_probability"],
-        FRAUD_THRESHOLD,
-    )
+    text = build_fraud_result_text(language, state["prediction_probability"], FRAUD_THRESHOLD)
     return {**state, "final_response": text}
-
-
-def _fraud_form_valid(state: AgentState) -> str:
-    return "predict_fraud" if not state.get("fraud_validation_errors") else "review_form"
 
 
 # --- database_query branch ---------------------------------------------------
@@ -301,18 +315,33 @@ Preserve every specific detail exactly — taxpayer IDs, years, amounts, names. 
 or invent one that wasn't in the original message. Output ONLY the rephrased English question, \
 nothing else (no preamble, no quotes)."""
 
+_DB_QUESTION_WITH_MEMORY_SYSTEM_PROMPT = _DB_QUESTION_SYSTEM_PROMPT + """
+
+For context, the user's PREVIOUS question in this same conversation was: "{previous_question}"
+If the new message is a follow-up that leaves something implied by that previous question unstated \
+(e.g. the same company, a different metric — "what about the taxes" after "sales in Bright company"), \
+resolve it into ONE single, fully self-contained question that repeats the implied detail explicitly. \
+If the new message is unrelated to the previous one, ignore the previous question entirely and \
+rephrase only the new message."""
+
 
 def prepare_db_question(state: AgentState) -> AgentState:
-    question_en = call_llm_text(_DB_QUESTION_SYSTEM_PROMPT, state["normalized_query"]).strip()
-    logger.info("[DB] rephrased question (en): %s", question_en)
-    return {**state, "db_question_en": question_en}
+    previous_question = state.get("last_db_question_en")
+    prompt = (
+        _DB_QUESTION_WITH_MEMORY_SYSTEM_PROMPT.format(previous_question=previous_question)
+        if previous_question
+        else _DB_QUESTION_SYSTEM_PROMPT
+    )
+    question_en = call_llm_text(prompt, state["normalized_query"]).strip()
+    logger.info("[DB] rephrased question (en): %s%s", question_en, " (used memory)" if previous_question else "")
+    return {**state, "db_question_en": question_en, "last_db_question_en": question_en}
 
 
 def run_sql_query(state: AgentState) -> AgentState:
     user_id = uuid.UUID(state["user_id"])
     with owner_engine.connect() as conn:
         result = handle_user_database_query(user_id, state["db_question_en"], conn)
-    return {**state, "sql_result": result, "sql_error": None if result["status"] in ("success", "direct_answer") else result["status"]}
+    return {**state, "sql_result": result, "sql_error": None if result["status"] in ("success", "direct_answer", "fraud_status") else result["status"]}
 
 
 # Each of these builds an LLM prompt for a specific, typed outcome from
@@ -377,12 +406,21 @@ the options. Do not mention SQL, databases, or any technical detail."""
 
 
 def _summary_prompt(language: str) -> str:
-    return f"""You are the eTax assistant. Write a short (1-3 sentence) answer to the user's question, \
+    return f"""You are the eTax assistant. Write a short (2-4 sentence) answer to the user's question, \
 in {language} — respond in {language} regardless of what language this instruction or the records \
 below are written in. Base the answer ONLY on the retrieved records given to you. Never state a \
-number, name, or fact that is not literally present in those records. If there are many rows, \
-summarize rather than listing each one — a table of the full records is shown separately, so you \
-don't need to enumerate them."""
+number, name, or fact that is not literally present in those records — in particular, never compute, \
+estimate, or state a percentage/rate/ratio yourself even if it seems obvious from two numbers you see; \
+only state a percentage if a field already named as a rate/percentage (e.g. tax_rate) is literally \
+present in the records — when it is, phrase that field's value as a plain percentage in the sentence \
+(e.g. a tax_rate of 0.15 is "15%"), never as a raw decimal fraction with many digits, and phrase it \
+the same way regardless of what language you're answering in. If the records include a company_name, \
+mention which company each fact belongs \
+to rather than presenting the numbers generically — a multi-company owner cannot otherwise tell which \
+company the answer is even about. If there are many rows, summarize rather than listing each one — a \
+table of the full records is shown separately, so you don't need to enumerate them. If an "Excluded \
+companies" note is given below, add one short sentence naming them and saying that level of detail \
+isn't available for them at the user's access level there."""
 
 
 def db_response(state: AgentState) -> AgentState:
@@ -412,6 +450,19 @@ def db_response(state: AgentState) -> AgentState:
         text = call_llm_text(_ambiguous_entity_prompt(language, detail.get("mention", ""), candidate_names), state["original_query"])
         return {**state, "final_response": text.strip(), "response_payload": {}}
 
+    if status == "fraud_status":
+        text = build_fraud_status_text(state.get("response_language", "en"), detail.get("review_status"))
+        return {**state, "final_response": text, "response_payload": {}}
+
+    if status == "unclear":
+        # Same deterministic, bilingual "which do you want" prompt the
+        # unclear INTENT already uses (clarify_intent) — offering the two
+        # real capabilities is more useful than a flat "couldn't understand",
+        # and needs no LLM call since the wording never depends on the
+        # specific question.
+        text = pick_template(CLARIFY_INTENT_TEMPLATES[state.get("response_language", "en")])
+        return {**state, "final_response": text, "response_payload": {}}
+
     if status in ("sql_validation_failed", "sql_execution_failed"):
         text = call_llm_text(_no_result_prompt(language), state["original_query"])
         return {**state, "final_response": text.strip(), "response_payload": {}}
@@ -430,6 +481,9 @@ def db_response(state: AgentState) -> AgentState:
         f"User's original question: {state['original_query']}\n\n"
         f"Retrieved records (JSON): {json.dumps(rows[:20], default=str)}"
     )
+    excluded_companies = detail.get("excluded_companies") or []
+    if excluded_companies:
+        summary_user_prompt += f"\n\nExcluded companies (not authorized for this at the user's access level there): {', '.join(excluded_companies)}"
     summary = call_llm_text(_summary_prompt(language), summary_user_prompt).strip()
 
     table = {
@@ -477,17 +531,23 @@ def build_graph():
         graph.add_node(name, node)
         graph.add_edge(name, END)
 
-    graph.add_node("extract_fraud_fields", extract_fraud_fields)
+    graph.add_node("load_fraud_record", load_fraud_record)
+    graph.add_node("fraud_no_record_response", fraud_no_record_response)
     graph.add_node("review_form", review_form)
-    graph.add_node("validate_fraud_form", validate_fraud_form)
+    graph.add_node("handle_fraud_review_action", handle_fraud_review_action)
+    graph.add_node("flagged_review_response", flagged_review_response)
     graph.add_node("predict_fraud", predict_fraud)
     graph.add_node("fraud_response", fraud_response)
 
-    graph.add_edge("extract_fraud_fields", "review_form")
-    graph.add_edge("review_form", "validate_fraud_form")
     graph.add_conditional_edges(
-        "validate_fraud_form", _fraud_form_valid, ["predict_fraud", "review_form"]
+        "load_fraud_record", _fraud_record_found, ["review_form", "fraud_no_record_response"]
     )
+    graph.add_edge("fraud_no_record_response", END)
+    graph.add_edge("review_form", "handle_fraud_review_action")
+    graph.add_conditional_edges(
+        "handle_fraud_review_action", _fraud_action_router, ["predict_fraud", "flagged_review_response"]
+    )
+    graph.add_edge("flagged_review_response", END)
     graph.add_edge("predict_fraud", "fraud_response")
     graph.add_edge("fraud_response", END)
 
@@ -500,7 +560,7 @@ def build_graph():
     graph.add_edge("db_response", END)
 
     graph.set_entry_point("route_intent")
-    all_branches = [*_SIMPLE_BRANCH_NODES, "extract_fraud_fields", "prepare_db_question"]
+    all_branches = [*_SIMPLE_BRANCH_NODES, "load_fraud_record", "prepare_db_question"]
     graph.add_conditional_edges("route_intent", lambda s: INTENT_ROUTING.get(s.get("intent", ""), "clarify_intent"), all_branches)
 
     return graph.compile(checkpointer=InMemorySaver())

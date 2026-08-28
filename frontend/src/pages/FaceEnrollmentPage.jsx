@@ -30,7 +30,7 @@ export function FaceEnrollmentPage() {
   const { auth, setSession, signOut } = useAuth();
   const { t } = useLanguage();
   const errorMessage = useErrorMessage();
-  const { videoRef, status: cameraStatus, start, captureFrame } = useCamera();
+  const { videoRef, status: cameraStatus, start, stop, captureFrame } = useCamera();
   const [stepIndex, setStepIndex] = React.useState(0);
   const [submitting, setSubmitting] = React.useState(false);
   const [failure, setFailure] = React.useState('');
@@ -41,8 +41,11 @@ export function FaceEnrollmentPage() {
 
   React.useEffect(() => {
     start();
-    return () => clearTimeout(pacingTimer.current);
-  }, [start]);
+    return () => {
+      clearTimeout(pacingTimer.current);
+      stop();
+    };
+  }, [start, stop]);
 
   const capture = async () => {
     setFailure('');
@@ -56,6 +59,10 @@ export function FaceEnrollmentPage() {
       clearTimeout(pacingTimer.current);
       setStepIndex(4);
       setDone(true);
+      // Release the camera the moment it's no longer needed — see the same
+      // fix in FaceVerificationPage.jsx for why this can't just wait for
+      // unmount.
+      stop();
       setSession({ access_token: res.access_token, stage: res.stage, user: auth.user });
       setTimeout(() => navigate('/chat', { replace: true }), 900);
     } catch (err) {

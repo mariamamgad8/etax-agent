@@ -11,18 +11,18 @@ collapsed into `other`; see `CLAUDE.md`). `fraud_assessment` and
 `database_query` are fully real end to end (UI included); `greeting`/
 `other`/`unclear`/`multi_intent` answer from curated deterministic templates
 (no LLM call for the reply itself):
-- **fraud_assessment** — LLM extracts whatever the message mentions → a
-  LangGraph `interrupt()` always shows the 23-field form (prefilled, never
-  auto-run even if every field was extracted), split into 8 required fields
-  (enough on their own for a "Standard Assessment") and 15 optional ones
-  (filling all of them unlocks a "Comprehensive Assessment") → Python
-  validation requires only the 8, loops back to the same form on invalid
-  input → one of two trained XGBoost models depending on exactly how many
-  fields are present — never the full model with gaps filled by
-  medians/modes → a plain-language result with the required hedging line.
-  The user can also type/paste more feature text into the chat while the
-  form is showing (`POST /chat/fraud/extract`) to fill it in without
-  submitting.
+- **fraud_assessment** — every field comes from the user's own linked
+  `tax.fraud_records` row (claimed at signup via a 9-digit code — a third,
+  independent identity mapping, unrelated to company ownership), never
+  typed/pasted into the chat. A LangGraph `interrupt()` shows all 23 values
+  **read-only** plus the record's review status; the user either confirms it
+  (runs the single full XGBoost model on all 23 inputs — the old
+  partial-input dedicated 8-feature model and LLM extraction/validation are
+  gone) or flags specific values as wrong (sets `review_status =
+  "requested_review"`, never edits the value directly — corrections are a
+  tax-authority-side workflow this app only stands a symbol column in for).
+  The result is a plain-language **risk score** (a percentage vs.
+  `FRAUD_THRESHOLD`), never the word "suspicious"/"fraud".
 - **database_query** — ownership-aware: a user with no company shares never
   reaches the SQL-generating LLM at all. Otherwise the message is translated
   to an internal English question → the LLM writes a single SQL `SELECT`
@@ -57,8 +57,9 @@ backend/                 FastAPI API — auth, face enrollment/verification, cha
 frontend/                React (Vite) — ported eTax design system + the six product pages
 docs/                    Deep-dive docs: chatbot flow, codebase review, debugging guide
 ml_artifacts/            Source fraud-model artifacts (ML_inputs_details.txt, feature_importance_table.csv,
-                          xgboost_8features_columns.txt + the 4 .joblib files) — the copies actually
-                          used at runtime live in backend/app/chat/fraud/models/, baked into the backend image
+                          the original dataset with its Fraud label, retired 8-feature-model files) — the
+                          copies actually used at runtime (3 .joblib files, Fraud-label-dropped dataset CSV)
+                          live in backend/app/chat/fraud/{models,data}/, baked into the backend image
 system_design_UI.zip     Source design system this frontend was built from
 docker-compose.yml       db + backend + frontend
 .env.example             Template for all required API keys/config — copy to .env and fill in
@@ -124,17 +125,17 @@ graph.py              LangGraph: route_intent -> branch; fraud_assessment is a r
                       the other six are still placeholders
 routes.py             POST /chat/message — requires stage=authenticated, handles
                       both starting a run and resuming an interrupted one
-fraud/schema.py       FraudFeatures (all-Optional extraction model), option lists, the
-                      8 required / 15 optional field split (CORE_REQUIRED_FIELDS/
-                      OPTIONAL_FIELDS, read from xgboost_8features_columns.txt), exact
-                      40-feature order confirmed from the live .joblib artifacts
-fraud/extraction.py   LLM extraction — never guesses; unmentioned fields stay null
-fraud/validation.py   Python validation — only the 8 core fields are required; the rest
-                      are validated (type/range/category) only if provided
-fraud/engine.py       Loads onehot/ordinal encoders + both XGBoost models, routes to
-                      whichever matches exactly how many of the 23 fields are present
-                      (never a partial run of the full model with gaps imputed)
-fraud/models/         The four .joblib artifacts (source copies in ml_artifacts/ at repo root)
+fraud/schema.py       Option lists, field order, FRAUD_THRESHOLD — shared vocabulary for
+                      the DB model, seed loader, and prediction engine (no user-facing
+                      form schema anymore — every value comes from the DB)
+fraud/records.py      get_user_fraud_record/record_to_fields/request_review — reads/
+                      updates a user's linked tax.fraud_records row
+fraud/engine.py       Loads the onehot/ordinal encoders + the single full XGBoost
+                      model and runs a prediction on a complete (always 23-field)
+                      fraud_records row
+fraud/models/         The three .joblib artifacts (source copies in ml_artifacts/ at repo root)
+fraud/data/           fraud_dataset.csv — the training dataset with its Fraud label
+                      column dropped, loaded into tax.fraud_records at seed time
 db/seed.py             ensure_ready() — loads the tax schema's example dataset (3
                        companies, 5 transactions, 5 items) if empty, idempotent,
                        called from main.py's startup hook
@@ -154,9 +155,10 @@ Tax data lives in the same Postgres database as auth data (`app.config.DATABASE_
 `POST /chat/message` (Bearer token) either starts a run (`{"message": "..."}`,
 `thread_id` optional — server mints one) or resumes a paused one
 (`{"thread_id": "...", "form_response": {...}}`). A response is either
-`{"reply": "...", "intent": "..."}` or, when the fraud form is showing,
-`{"awaiting": {"type": "fraud_form", "fields": {...prefilled...}, "errors": [...],
-"schema": {...categorical options + which fields are integer-only...}}}`.
+`{"reply": "...", "intent": "..."}` or, when the fraud review card is showing,
+`{"awaiting": {"type": "fraud_review", "record_id": ..., "record": {...all 23
+values, read-only...}, "review_status": "..."}}` — resumed with either
+`{"action": "confirm"}` or `{"action": "flag", "fields": [...]}`.
 `thread_id` is prefixed with the owning user's id and checked on every
 resume — one user can't submit into another user's paused conversation.
 The graph uses `langgraph`'s `InMemorySaver` checkpointer, so paused
@@ -301,16 +303,15 @@ real now instead of echoing a placeholder:
 - Plain messages render as chat bubbles; a `database_query` response with a
   `table` payload renders the design system's `DataTable` under the
   assistant's text summary.
-- A `fraud_assessment` response with `awaiting.type === "fraud_form"` renders
+- A `fraud_assessment` response with `awaiting.type === "fraud_review"` renders
   `components/chat/FraudForm.jsx` inline in the message list instead of
-  plain text — categorical dropdowns and numeric fields are generated
-  entirely from `awaiting.schema` (the same option lists `fraud/schema.py`
-  uses), so the frontend never hand-duplicates the model's valid categories.
-  Submitting calls back with `{thread_id, form_response}`; a validation
-  failure re-renders the same form with the errors and last-submitted
-  values, exactly mirroring the backend's loop-back state.
-- The composer is disabled while a form is pending or a request is in
-  flight, so a stray message can't be sent mid-form.
+  plain text — a read-only display of all 23 values from `awaiting.record`
+  plus `awaiting.review_status`, each value with a checkbox to flag it as
+  wrong. "Show Risk Score" resumes with `{action: "confirm"}`; "Request
+  Review" resumes with `{action: "flag", fields: [...]}` — the frontend never
+  edits a value directly, only flags it.
+- The composer is disabled while the review card is pending or a request is
+  in flight, so a stray message can't be sent mid-review.
 
 `frontend/Dockerfile`'s `npm run dev` container now also bind-mounts
 `frontend/src`/`public`/`index.html` (matching the backend's existing

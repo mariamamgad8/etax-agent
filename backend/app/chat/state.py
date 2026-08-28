@@ -21,21 +21,28 @@ class AgentState(TypedDict, total=False):
     # app.chat.responses.detect_response_language.
     response_language: str
 
-    # Fraud
-    extracted_features: dict
-    missing_features: list[str]
-    confirmed_features: dict
-    fraud_validation_errors: list[str]
-    prediction_label: str
+    # Fraud — every field comes from the user's linked tax.fraud_records row
+    # (see app.chat.fraud.records), never typed/pasted by the user.
+    fraud_record_missing: bool
+    fraud_record_id: int
+    fraud_record_fields: dict
+    fraud_review_status: str
+    fraud_review_action: dict  # the review_form interrupt's resume value
+    fraud_flagged: bool
     prediction_probability: Optional[float]
-    prediction_tier: str  # "Standard Assessment" | "Comprehensive Assessment" — see fraud/engine.py
-    fields_provided: int
-    fields_total: int
 
-    # Database (wired up in a later milestone)
+    # Database
     db_question_en: str
     sql_result: Any
     sql_error: Optional[str]
+    # Short-term memory across turns ON THE SAME thread_id: the last
+    # resolved English question from a database_query turn, so a follow-up
+    # like "what about the taxes" can be resolved against "sales in Bright
+    # company" without the user repeating themselves. Only prepare_db_question
+    # reads/writes this — untouched by every other branch, so it simply sits
+    # unused (not stale-dangerous) across a greeting/fraud_assessment turn in
+    # between. See graph.py's prepare_db_question.
+    last_db_question_en: Optional[str]
 
     # Response
     response_payload: dict

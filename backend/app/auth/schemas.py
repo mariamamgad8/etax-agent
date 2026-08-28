@@ -9,6 +9,11 @@ class SignupRequest(BaseModel):
     email: EmailStr
     password: str = Field(min_length=8, max_length=128)
     confirm_password: str
+    # 9-digit code linking this account to its tax.fraud_records row (see
+    # app.database.tax_models.FraudRecord) — a third, independent identity
+    # mapping, unrelated to company ownership. Required for every signup,
+    # not just company owners: every user type gets one linked record.
+    tax_record_code: str = Field(min_length=9, max_length=9, pattern=r"^\d{9}$")
 
     @field_validator("confirm_password")
     @classmethod

@@ -1,21 +1,23 @@
 """
 Central text-to-speech access point, mirroring llm.py/stt.py's shape: routes
 call synthesize_speech(text) and this module handles provider fallback
-(Gemini -> Piper -> edge_tts -> ElevenLabs by default, TTS_PROVIDER_ORDER)
-and cooldown.
+(Gemini -> edge_tts -> ElevenLabs by default, TTS_PROVIDER_ORDER) and
+cooldown.
 
 Gemini is the default/primary provider: it's what actually serves audio
 today (see below), and it accepts plain multilingual text directly — no
 separate language parameter, since its TTS models infer the spoken language
 from the input text itself (confirmed live for both English and Arabic).
-Piper (local/offline ONNX voice models baked into the image at build time —
-see backend/Dockerfile) is the second attempt: no network call, no API key,
-no rate limit, and live comparison found it noticeably better on Arabic
-than edge_tts. edge_tts (Microsoft Edge's free online voices) is third.
-Like edge_tts, Piper's voices are per-language, so _synthesize_piper picks
-PIPER_VOICE_AR/PIPER_VOICE_EN itself via the same deterministic language
-detection the rest of the chatbot already uses
-(app.chat.responses.detect_response_language) rather than a second guess.
+edge_tts (Microsoft Edge's free online voices) is the fallback.
+
+Piper (local/offline ONNX voices) was tried as a fast, rate-limit-proof
+fallback but removed after a live, reproducible crash: ONNXRuntime's Reshape
+kernel raised "the dimension with value zero exceeds the dimension size of
+the input tensor" on real (non-trivial) input text — not an occasional
+flake, a real defect in that path. Rather than debug a third-party ONNX
+model's internals, it was dropped from the fallback chain entirely; see this
+module's git history / the project's CLAUDE.md for the prior integration if
+it's ever worth revisiting with a different voice model.
 
 NOTE (live-tested, not guessed): the ElevenLabs key configured in this
 project's .env is missing the `voices_read` permission and 402s on any
@@ -28,10 +30,7 @@ round trip ahead of a provider that actually works.
 
 Gemini's TTS models return raw 16-bit PCM audio (confirmed live: mime type
 "audio/L16;codec=pcm;rate=24000"), not a playable container — _pcm_to_wav
-wraps it in a WAV header before it's returned to the caller. Piper's own
-AudioChunk objects carry their own sample rate (confirmed live: 22050 Hz for
-both voices used here, not necessarily the same as Gemini's), so
-_synthesize_piper passes that through explicitly rather than assuming 24000.
+wraps it in a WAV header before it's returned to the caller.
 
 Fallback latency: the google-genai SDK retries a failing request itself, by
 default, up to 5 attempts with exponential backoff (1s, 2s, 4s, 8s...) on
@@ -48,13 +47,11 @@ import io
 import logging
 import time
 import wave
-from pathlib import Path
 
 import edge_tts
 import httpx
 from google import genai
 from google.genai import types as genai_types
-from piper import PiperVoice
 
 from app.chat.config import (
     EDGE_TTS_VOICE_AR,
@@ -66,9 +63,6 @@ from app.chat.config import (
     GEMINI_TTS_MODEL,
     GEMINI_TTS_VOICE,
     MODEL_COOLDOWN_SECONDS,
-    PIPER_VOICE_AR,
-    PIPER_VOICE_DIR,
-    PIPER_VOICE_EN,
     TTS_PROVIDER_ORDER,
 )
 from app.chat.providers.base import AllProvidersExhausted, CooldownTracker, ProviderError
@@ -155,30 +149,6 @@ def _synthesize_gemini(text: str) -> tuple[bytes, str]:
     raise ProviderError(f"All {len(_gemini_clients)} configured Gemini TTS key(s) failed. Last error: {last_exc}")
 
 
-# Loaded once per language and reused — PiperVoice.load() reads the ONNX
-# model from disk, which is slow to repeat on every call.
-_piper_voices: dict[str, PiperVoice] = {}
-
-
-def _load_piper_voice(name: str) -> PiperVoice:
-    if name not in _piper_voices:
-        model_path = Path(PIPER_VOICE_DIR) / f"{name}.onnx"
-        if not model_path.exists():
-            raise ProviderError(f"Piper voice model not found: {model_path}")
-        _piper_voices[name] = PiperVoice.load(str(model_path))
-    return _piper_voices[name]
-
-
-def _synthesize_piper(text: str) -> tuple[bytes, str]:
-    voice_name = PIPER_VOICE_AR if detect_response_language(text) == "ar" else PIPER_VOICE_EN
-    voice = _load_piper_voice(voice_name)
-    chunks = list(voice.synthesize(text))
-    if not chunks:
-        raise ProviderError("Piper returned no audio data.")
-    pcm_bytes = b"".join(c.audio_int16_bytes for c in chunks)
-    return _pcm_to_wav(pcm_bytes, sample_rate=chunks[0].sample_rate, channels=chunks[0].sample_channels), "audio/wav"
-
-
 async def _edge_tts_stream(text: str, voice: str) -> bytes:
     communicate = edge_tts.Communicate(text, voice)
     chunks = bytearray()
@@ -201,7 +171,6 @@ def _synthesize_edge_tts(text: str) -> tuple[bytes, str]:
 
 _PROVIDERS = {
     "gemini": _synthesize_gemini,
-    "piper": _synthesize_piper,
     "edge_tts": _synthesize_edge_tts,
     "elevenlabs": _synthesize_elevenlabs,
 }
