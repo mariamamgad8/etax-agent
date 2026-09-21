@@ -1,193 +1,340 @@
-Thank you for your interest in contributing to TAYA.
+TAYA
 
-TAYA is an AI-powered taxpayer assistance component developed as 
+Intelligent Taxpayer Assistance Assistant
+
+TAYA is an AI-powered conversational assistant developed as a core component of a broader Self-Service Taxpayer Assistance System.
+
+The system provides a natural-language interface for interacting with tax-related information and services by combining Large Language Models (LLMs) with structured enterprise data and backend services.
+
+TAYA is designed to move beyond conventional chatbot interactions by grounding generated responses in relevant and controlled information available within the underlying data ecosystem.
 
 ---
 
-1. Project Overview
+Overview
 
-TAYA is designed as an intelligent conversational layer that connects users with tax-related information and services.
+TAYA serves as the conversational intelligence layer between the user, backend services, AI models, and structured tax-related data.
+
+The primary objective is to provide accurate, context-aware, and accessible assistance while maintaining a controlled interaction with enterprise information.
 
 The system focuses on:
 
-- Natural-language interaction with users
-- AI-assisted taxpayer support
-- Integration with Large Language Models (LLMs)
-- Grounding responses in structured enterprise data
-- Context-aware conversational workflows
-- Controlled interaction with backend services and tax-related information
-
-TAYA is part of a larger architecture where the conversational interface interacts with backend services, data sources, and AI components.
-
-Core Concept
-
-User
-  │
-  ▼
-TAYA Conversational Interface
-  │
-  ▼
-Backend / API Layer
-  │
-  ├── LLM Services
-  │
-  ├── Tax & Business Data
-  │
-  └── Supporting AI Services
-  │
-  ▼
-Grounded Response
-  │
-  ▼
-User
-
-The primary objective is to ensure that AI-generated responses are based on relevant and controlled information rather than relying solely on the model's internal knowledge.
-
----
-
-2. Contribution Areas
-
-Contributors can work across several areas of the project.
-
-AI & LLM
-
-- Prompt engineering
-- Context construction
-- LLM integration
-- Response generation
-- Conversational workflows
-- Hallucination mitigation
-- Retrieval and grounding strategies
-- Response validation
-
-Backend
-
-- API development
-- Authentication and authorization
-- Request/response handling
-- Business logic
-- Integration with AI services
-- Error handling
-- Logging and monitoring
-
-Data
-
-- Data modeling
-- Data preprocessing
-- Data validation
-- Query optimization
+- Natural-language interaction
+- Context-aware conversations
+- LLM-based response generation
 - Structured-data integration
-- Retrieval pipelines
-- Data quality improvements
-
-Frontend
-
-- Conversational UI
-- Chat interaction
-- Message rendering
-- Loading and processing states
-- Error states
-- Accessibility
-- Responsive design
-
-Testing & Evaluation
-
-- Unit testing
-- Integration testing
-- API testing
-- LLM response evaluation
-- Prompt evaluation
-- Edge-case testing
-- Regression testing
+- Data-grounded responses
+- AI-assisted information retrieval
+- Controlled access to backend services
 
 ---
 
-3. Development Principles
+System Architecture
 
-Contributors should follow these principles when modifying TAYA.
+TAYA follows a layered architecture that separates the conversational interface, application logic, AI services, and data infrastructure.
 
-Reliability First
+                        User
+                         |
+                         v
+              +----------------------+
+              |   TAYA Interface     |
+              | Conversational Layer |
+              +----------+-----------+
+                         |
+                         v
+              +----------------------+
+              |     Backend API      |
+              |  Application Layer   |
+              +----------+-----------+
+                         |
+              +----------+----------+
+              |                     |
+              v                     v
+      +---------------+     +---------------+
+      |   LLM Layer   |     |   Data Layer  |
+      |               |     |               |
+      | Understanding |     | Tax Data      |
+      | Generation    |     | Enterprise    |
+      | Reasoning     |     | Data          |
+      +-------+-------+     +-------+-------+
+              |                     |
+              +----------+----------+
+                         |
+                         v
+              +----------------------+
+              | Grounded Response   |
+              +----------+-----------+
+                         |
+                         v
+                        User
 
-AI-generated responses should be grounded in reliable information whenever the system has access to the relevant data.
-
-Separation of Concerns
-
-Keep the following responsibilities separated whenever possible:
-
-UI
- ↓
-API
- ↓
-Application Logic
- ↓
-AI / Retrieval Layer
- ↓
-Data Layer
-
-Avoid placing business logic directly inside UI components or tightly coupling AI logic with presentation code.
-
-Security
-
-Never expose:
-
-- API keys
-- Database credentials
-- Authentication tokens
-- Private taxpayer information
-- Internal configuration
-- Sensitive environment variables
-
-Sensitive configuration must be stored through environment variables or the project's approved secrets-management mechanism.
-
-Maintainability
-
-Prefer:
-
-- Small, focused functions
-- Clear naming
-- Reusable components
-- Explicit interfaces
-- Meaningful error handling
-- Minimal duplication
+This separation enables independent development and maintenance of the interface, backend services, AI components, and data layer.
 
 ---
 
-4. Local Development
+Core Workflow
 
-Before contributing, make sure the required development environment is installed.
+A typical interaction follows the following pipeline:
 
-Typical requirements may include:
+User Query
+    |
+    v
+Input Processing
+    |
+    v
+Context Identification
+    |
+    v
+Relevant Information Retrieval
+    |
+    v
+Context Construction
+    |
+    v
+LLM Processing
+    |
+    v
+Response Validation
+    |
+    v
+Grounded Response
+    |
+    v
+User
+
+The workflow is designed to provide the LLM with relevant contextual information before generating a response, reducing reliance on unsupported model-generated knowledge.
+
+---
+
+AI and LLM Integration
+
+TAYA uses Large Language Models as the primary intelligence layer for natural-language interaction.
+
+The AI layer is responsible for:
+
+- Understanding user queries
+- Identifying conversational context
+- Constructing relevant prompts
+- Processing retrieved information
+- Generating natural-language responses
+- Handling conversational context
+- Supporting data-grounded generation
+
+The architecture is designed around the principle that the LLM should operate with relevant contextual information rather than functioning as an isolated source of knowledge.
+
+---
+
+Data Integration
+
+TAYA is integrated into a broader data ecosystem that provides structured information required by the AI layer.
+
+The underlying system includes technologies such as:
+
+- SQL Server
+- PostgreSQL
+- Enterprise data sources
+- Structured taxpayer information
+- Machine Learning features
+
+The separation between the AI and data layers enables controlled data access while allowing the conversational system to utilize structured enterprise information.
+
+---
+
+Data-Grounded Generation
+
+A key design principle of TAYA is data-grounded response generation.
+
+Instead of relying exclusively on the LLM's internal knowledge, relevant information is retrieved from available data sources and incorporated into the model context.
+
+Structured Data
+      |
+      v
+Information Retrieval
+      |
+      v
+Relevant Context
+      |
+      v
+LLM
+      |
+      v
+Grounded Response
+
+This approach is intended to improve response relevance, consistency, and traceability.
+
+---
+
+Security and Privacy
+
+TAYA operates within a domain where enterprise and taxpayer-related information may be sensitive.
+
+Security considerations include:
+
+- Controlled access to data
+- Environment-based configuration
+- Separation of credentials from source code
+- API authentication and authorization
+- Input validation
+- Secure service communication
+- Protection of sensitive information
+- Use of anonymized or synthetic data during development and testing
+
+Sensitive credentials must never be committed to the repository.
+
+Examples include:
+
+API Keys
+Database Credentials
+Authentication Tokens
+Private Taxpayer Information
+Internal Service Credentials
+
+---
+
+Evaluation
+
+AI-generated responses should be evaluated using multiple dimensions rather than relying solely on whether a response was successfully generated.
+
+Dimension| Description
+Relevance| Alignment between the response and the user's request
+Groundedness| Degree to which the response is supported by available information
+Factual Consistency| Absence of unsupported or contradictory claims
+Completeness| Coverage of the information required to answer the query
+Robustness| Behavior under ambiguous or unexpected inputs
+Safety| Protection against inappropriate or sensitive information disclosure
+
+---
+
+Technology Stack
+
+Artificial Intelligence
+
+- Large Language Models
+- Machine Learning
+- Natural Language Processing
+- Prompt Engineering
+- Context-Aware Generation
+
+Backend and Data
+
+- Python
+- SQL Server
+- PostgreSQL
+- REST APIs
+
+Data and Business Intelligence
+
+- Power BI
+- Tableau
+- amCharts
+- Elastic
+- Kibana
+- SAP
+
+Development
+
+- Git
+- GitHub
+- Environment-based configuration
+
+---
+
+Project Structure
+
+A logical implementation of the system can be organized into the following layers:
+
+TAYA/
+|
++-- frontend/
+|   +-- components/
+|   +-- pages/
+|   +-- services/
+|
++-- backend/
+|   +-- api/
+|   +-- services/
+|   +-- models/
+|   +-- utils/
+|
++-- ai/
+|   +-- prompts/
+|   +-- llm/
+|   +-- retrieval/
+|   +-- evaluation/
+|
++-- data/
+|   +-- schemas/
+|   +-- samples/
+|
++-- tests/
+|
++-- .env.example
++-- requirements.txt
++-- README.md
+
+The exact implementation may vary depending on the deployment environment and system configuration.
+
+---
+
+Development
+
+Requirements
+
+Typical development requirements include:
 
 - Python
 - Node.js
 - Git
-- Required backend dependencies
-- Required frontend dependencies
-- Access to the configured AI/LLM provider
+- Configured backend dependencies
+- Configured frontend dependencies
+- Access to the required LLM provider
 
-Clone the repository:
+Clone the Repository
 
 git clone <repository-url>
-cd <repository-directory>
+cd TAYA
 
-Create and configure the required environment variables according to the project's environment configuration.
+Environment Configuration
+
+Create a local environment configuration based on ".env.example".
 
 Example:
 
 LLM_API_KEY=your_api_key
 DATABASE_URL=your_database_url
 
-Never commit ".env" files or credentials to the repository.
-
-Install dependencies according to the backend and frontend setup documented in the project.
+Environment files containing credentials should remain local and must not be committed to version control.
 
 ---
 
-5. Branching Strategy
+Development Principles
 
-Create a dedicated branch for every feature, bug fix, or improvement.
+Modularity
 
-Recommended naming:
+Separate presentation, application logic, AI services, and data access.
+
+Reliability
+
+Prefer validated and retrieved information over unsupported generated assumptions.
+
+Security
+
+Treat taxpayer and enterprise information as sensitive throughout the application lifecycle.
+
+Maintainability
+
+Keep services, components, and functions focused and independently maintainable.
+
+Scalability
+
+Design the architecture so that additional AI models, data sources, and services can be integrated without major architectural changes.
+
+---
+
+Contributing
+
+Contributions should follow the project's established development workflow.
+
+Create a dedicated branch for each feature, fix, or improvement:
 
 feature/<feature-name>
 bugfix/<issue-name>
@@ -195,291 +342,31 @@ refactor/<component-name>
 docs/<documentation-name>
 test/<test-name>
 
-Examples:
+Before submitting a Pull Request:
 
-feature/context-aware-responses
-bugfix/chat-timeout
-refactor/llm-service
-docs/api-documentation
-test/response-validation
-
-Avoid committing directly to the main branch.
-
----
-
-6. Commit Guidelines
-
-Commits should clearly describe the change they introduce.
-
-Recommended format:
-
-<type>: <short description>
-
-Examples:
-
-feat: add taxpayer context retrieval
-fix: handle empty LLM responses
-refactor: separate LLM service from chat controller
-test: add API validation tests
-docs: update contributor guide
-
-Keep commits focused.
-
-Avoid combining unrelated changes into a single commit.
+- Ensure the implementation follows the existing architecture.
+- Add or update relevant tests.
+- Verify that existing functionality remains intact.
+- Remove sensitive information and credentials.
+- Update documentation where necessary.
+- Provide a clear description of the changes.
 
 ---
 
-7. Pull Requests
-
-Before opening a Pull Request:
-
-Checklist
-
-- [ ] Code follows the project structure
-- [ ] No secrets or credentials are committed
-- [ ] Existing functionality is not unnecessarily broken
-- [ ] Relevant tests have been added or updated
-- [ ] Documentation has been updated when required
-- [ ] Error handling has been considered
-- [ ] The branch is up to date with the target branch
-- [ ] Commit messages clearly describe the changes
-
-A Pull Request should explain:
-
-What changed?
-
-Describe the implementation.
-
-Why was it changed?
-
-Explain the problem or requirement being addressed.
-
-How was it implemented?
-
-Briefly explain the technical approach.
-
-How was it tested?
-
-Describe the tests or validation performed.
-
----
-
-8. AI / LLM Contribution Guidelines
-
-Because TAYA relies on AI-generated responses, contributors should pay particular attention to reliability and evaluation.
-
-Do
-
-- Ground responses in trusted data
-- Validate retrieved context
-- Handle missing information explicitly
-- Define clear system instructions
-- Test ambiguous user queries
-- Test adversarial and unexpected inputs
-- Measure changes in response quality
-- Keep prompts version-controlled when appropriate
-
-Avoid
-
-- Hardcoding sensitive information into prompts
-- Assuming the LLM is always factually correct
-- Returning unsupported tax information
-- Silently fabricating missing information
-- Using unvalidated external information as authoritative tax data
-
-When the required information is unavailable, the system should prefer an explicit limitation over generating an unsupported answer.
-
----
-
-9. Data & Privacy
-
-TAYA may interact with sensitive business or taxpayer-related information.
-
-Contributors must treat data privacy as a core engineering requirement.
-
-Never use real sensitive taxpayer information for:
-
-- Local development
-- Debugging
-- Screenshots
-- Test fixtures
-- Public repositories
-- Demonstration environments
-
-Use synthetic or anonymized data whenever possible.
-
-Example:
-
-{
-  "taxpayer_id": "TEST-001",
-  "name": "Sample User",
-  "status": "active"
-}
-
-rather than real taxpayer records.
-
----
-
-10. Testing
-
-Every meaningful change should be validated before submission.
-
-Testing may include:
-
-Unit Tests
-     ↓
-Integration Tests
-     ↓
-API Tests
-     ↓
-AI / LLM Evaluation
-     ↓
-End-to-End Validation
-
-For AI-related changes, functional correctness alone may not be sufficient.
-
-Consider evaluating:
-
-- Relevance
-- Factual consistency
-- Groundedness
-- Response completeness
-- Instruction following
-- Handling of unavailable information
-- Robustness to ambiguous queries
-
----
-
-11. Issue Reporting
-
-When reporting a bug, provide enough information to reproduce it.
-
-Include:
-
-Description
-
-What happened?
-
-Expected Behavior
-
-What should have happened?
-
-Steps to Reproduce
-
-1. Start the application
-2. Open the TAYA interface
-3. Submit the following query
-4. Observe the response
-
-Environment
-
-OS:
-Python:
-Node.js:
-Backend version:
-Frontend version:
-
-Additional Information
-
-Include relevant logs, screenshots, or error messages while ensuring that no sensitive information is exposed.
-
----
-
-12. Feature Requests
-
-Feature requests should describe:
-
-1. The problem being addressed
-2. The proposed functionality
-3. The expected user benefit
-4. Possible technical considerations
-5. Potential impact on existing functionality
-
-For AI-related features, include an explanation of how the feature could be evaluated.
-
----
-
-13. Code Review
-
-During review, contributors should consider:
-
-Architecture
-
-- Does the change fit the existing architecture?
-- Is the responsibility placed in the correct layer?
-
-Reliability
-
-- What happens when the AI service fails?
-- What happens when required data is unavailable?
-- Are edge cases handled?
-
-Security
-
-- Could the change expose sensitive information?
-- Are inputs validated?
-
-Maintainability
-
-- Is the implementation understandable?
-- Is unnecessary complexity introduced?
-
-Testing
-
-- Is the behavior adequately tested?
-
----
-
-14. Contribution Workflow
-
-The recommended workflow is:
-
-1. Understand the Issue
-        ↓
-2. Create a Feature Branch
-        ↓
-3. Implement the Change
-        ↓
-4. Run Tests
-        ↓
-5. Review Your Changes
-        ↓
-6. Commit
-        ↓
-7. Push the Branch
-        ↓
-8. Open a Pull Request
-        ↓
-9. Address Review Feedback
-        ↓
-10. Merge
-
----
-
-15. Engineering Standards
-
-Contributors are encouraged to prioritize:
-
-Correctness → Security → Reliability → Maintainability → Performance
-
-For AI features, an additional priority applies:
-
-Groundedness and factual reliability
-
-A feature should not be considered successful simply because it produces a fluent response. The response should also be relevant, supported by available information, and appropriate for the user's request.
-
----
-
-16. Final Notes
-
-TAYA is part of a broader AI-driven tax technology ecosystem. Contributions should therefore be designed with the larger system architecture in mind rather than treating the conversational layer as an isolated chatbot.
-
-When in doubt:
-
-- Prefer explicit behavior over implicit assumptions.
-- Prefer validated data over generated assumptions.
-- Prefer modular architecture over tightly coupled implementations.
-- Prefer measurable improvements over subjective changes.
-- Document important architectural decisions.
-
-Thank you for contributing to TAYA.
+Project Context
+
+TAYA is part of a broader AI-driven tax technology solution that combines:
+
+Data Management
+       |
+       +-- Machine Learning
+       |
+       +-- Large Language Models
+       |
+       +-- Enterprise Data
+       |
+       +-- Conversational AI
+       |
+       +-- Secure System Integration
+
+The project demonstrates an approach to integrating conversational AI with structured enterprise data to support intelligent and data-grounded taxpayer assistance
